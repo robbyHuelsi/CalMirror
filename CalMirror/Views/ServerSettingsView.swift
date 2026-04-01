@@ -1,0 +1,172 @@
+import SwiftUI
+import SwiftData
+
+struct ServerSettingsView: View {
+    @Environment(\.modelContext) private var modelContext
+    @Query private var serverConfigs: [ServerConfiguration]
+
+    @State private var serverURL = ""
+    @State private var username = ""
+    @State private var password = ""
+    @State private var calendarPath = "/calendars/"
+    @State private var syncInterval = 30
+    @State private var displayName = "CalDAV Server"
+
+    @State private var isTesting = false
+    @State private var testResult: TestResult?
+
+    private enum TestResult {
+        case success
+        case failure(String)
+    }
+
+    private let syncIntervalOptions = [15, 30, 60, 120]
+
+    var body: some View {
+        Form {
+            Section("Server") {
+                TextField("Server URL", text: $serverURL)
+                #if os(iOS)
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.URL)
+                #endif
+                    .autocorrectionDisabled()
+
+                TextField("Display Name", text: $displayName)
+            }
+
+            Section("Authentication") {
+                TextField("Username", text: $username)
+                #if os(iOS)
+                    .textInputAutocapitalization(.never)
+                #endif
+                    .autocorrectionDisabled()
+
+                SecureField("Password", text: $password)
+            }
+
+            Section("Calendar Path") {
+                TextField("Path on Server", text: $calendarPath)
+                #if os(iOS)
+                    .textInputAutocapitalization(.never)
+                #endif
+                    .autocorrectionDisabled()
+
+                Text("e.g. /remote.php/dav/calendars/user/calmirror/")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Sync Interval") {
+                Picker("Fallback Interval", selection: $syncInterval) {
+                    ForEach(syncIntervalOptions, id: \.self) { minutes in
+                        Text("\(minutes) min").tag(minutes)
+                    }
+                }
+            }
+
+            Section {
+                Button {
+                    Task { await testConnection() }
+                } label: {
+                    HStack {
+                        if isTesting {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                        Text("Test Connection")
+                    }
+                }
+                .disabled(isTesting || serverURL.isEmpty || username.isEmpty || password.isEmpty)
+
+                if let testResult {
+                    switch testResult {
+                    case .success:
+                        Label("Connection successful", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    case .failure(let message):
+                        Label(message, systemImage: "xmark.circle.fill")
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
+
+            Section {
+                Button("Save") {
+                    saveConfiguration()
+                }
+                .disabled(serverURL.isEmpty || username.isEmpty)
+            }
+        }
+        .navigationTitle("Server Settings")
+        .onAppear(perform: loadExisting)
+    }
+
+    private func loadExisting() {
+        guard let existing = serverConfigs.first else { return }
+        serverURL = existing.serverURL
+        username = existing.username
+        calendarPath = existing.calendarPath
+        syncInterval = existing.syncIntervalMinutes
+        displayName = existing.displayName
+        if let pw = KeychainHelper.load(
+            service: existing.keychainServiceID,
+            account: existing.username
+        ) {
+            password = pw
+        }
+    }
+
+    private func saveConfiguration() {
+        let config: ServerConfiguration
+        if let existing = serverConfigs.first {
+            config = existing
+            // If username changed, delete old keychain entry
+            if existing.username != username {
+                KeychainHelper.delete(
+                    service: existing.keychainServiceID,
+                    account: existing.username
+                )
+            }
+        } else {
+            config = ServerConfiguration()
+            modelContext.insert(config)
+        }
+
+        config.serverURL = serverURL
+        config.username = username
+        config.calendarPath = calendarPath
+        config.syncIntervalMinutes = syncInterval
+        config.displayName = displayName
+        config.isActive = true
+
+        if !password.isEmpty {
+            try? KeychainHelper.save(
+                password: password,
+                service: config.keychainServiceID,
+                account: username
+            )
+        }
+
+        try? modelContext.save()
+    }
+
+    private func testConnection() async {
+        isTesting = true
+        testResult = nil
+        defer { isTesting = false }
+
+        do {
+            let client = try CalDAVClient(
+                serverURL: serverURL,
+                calendarPath: calendarPath,
+                username: username,
+                password: password
+            )
+            let success = try await client.testConnection()
+            testResult = success ? .success : .failure("Server responded but path may be invalid")
+        } catch {
+            testResult = .failure(error.localizedDescription)
+        }
+    }
+}

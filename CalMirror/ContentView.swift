@@ -1,80 +1,167 @@
-//
-//  ContentView.swift
-//  CalMirror
-//
-//  Created by Robert Hülsmann on 01.04.26.
-//
-
 import SwiftUI
 import SwiftData
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query private var items: [Item]
+    @Environment(SyncScheduler.self) private var syncScheduler
+    @Query(filter: #Predicate<CalendarSyncConfig> { $0.isEnabled }) private var enabledCalendars: [CalendarSyncConfig]
+    @Query private var cachedEvents: [CachedEvent]
+    @Query private var serverConfigs: [ServerConfiguration]
+
+    let eventStore: EventReading
+
+    @State private var syncHistory: [SyncResult] = []
+    @State private var isSyncing = false
 
     var body: some View {
-        NavigationViewWrapper {
+        NavigationStack {
             List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                    } label: {
-                        Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
+                statusSection
+                syncSection
+                settingsSection
+            }
+            .navigationTitle("CalMirror")
+            .onReceive(NotificationCenter.default.publisher(for: .calendarDidChange)) { _ in
+                Task { await autoSync() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .scheduledSyncDidFire)) { _ in
+                Task { await autoSync() }
+            }
+        }
+    }
+
+    // MARK: - Status Section
+
+    private var statusSection: some View {
+        Section("Status") {
+            HStack {
+                Label("Synced Events", systemImage: "calendar")
+                Spacer()
+                Text("\(cachedEvents.count)")
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack {
+                Label("Active Calendars", systemImage: "checklist")
+                Spacer()
+                Text("\(enabledCalendars.count)")
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack {
+                Label("Server", systemImage: "server.rack")
+                Spacer()
+                if let server = serverConfigs.first {
+                    Text(server.displayName)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Not configured")
+                        .foregroundStyle(.red)
+                }
+            }
+
+            if let lastSync = syncScheduler.lastSyncDate {
+                HStack {
+                    Label("Last Sync", systemImage: "clock")
+                    Spacer()
+                    Text(lastSync, style: .relative)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if let lastResult = syncScheduler.syncEngine.lastSyncResult {
+                HStack {
+                    Label("Last Result", systemImage: lastResult.errors.isEmpty ? "checkmark.circle" : "exclamationmark.triangle")
+                    Spacer()
+                    Text(lastResult.summary)
+                        .font(.caption)
+                        .foregroundStyle(lastResult.errors.isEmpty ? .secondary : Color.orange)
+                }
+            }
+        }
+    }
+
+    // MARK: - Sync Section
+
+    private var syncSection: some View {
+        Section("Sync") {
+            Button {
+                Task { await manualSync() }
+            } label: {
+                HStack {
+                    Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
+                    Spacer()
+                    if isSyncing {
+                        ProgressView()
+                            .controlSize(.small)
                     }
                 }
-                .onDelete(perform: deleteItems)
             }
-#if os(macOS)
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200)
-#endif
-            .toolbar {
-#if os(iOS)
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
-#endif
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
-                    }
-                }
+            .disabled(isSyncing || serverConfigs.isEmpty || enabledCalendars.isEmpty)
+
+            if serverConfigs.isEmpty {
+                Label("Configure a server first", systemImage: "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if enabledCalendars.isEmpty {
+                Label("Select calendars to sync", systemImage: "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }
 
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(timestamp: Date())
-            modelContext.insert(newItem)
-        }
-    }
+    // MARK: - Settings Section
 
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets {
-                modelContext.delete(items[index])
+    private var settingsSection: some View {
+        Section("Settings") {
+            NavigationLink {
+                ServerSettingsView()
+            } label: {
+                Label("Server Configuration", systemImage: "server.rack")
+            }
+
+            NavigationLink {
+                CalendarSelectionView(eventStore: eventStore)
+            } label: {
+                Label("Calendars", systemImage: "calendar")
+            }
+
+            NavigationLink {
+                SyncLogView(syncResults: syncHistory)
+            } label: {
+                Label("Sync Log", systemImage: "list.bullet.clipboard")
             }
         }
     }
-}
 
-fileprivate struct NavigationViewWrapper<Content: View>: View {
-    let content: () -> Content
+    // MARK: - Sync Actions
 
-    var body: some View {
-#if os(macOS)
-        NavigationSplitView {
-            content()
-        } detail: {
-            Text("Select an item")
+    private func manualSync() async {
+        isSyncing = true
+        let result = await syncScheduler.triggerSync(modelContext: modelContext)
+        syncHistory.insert(result, at: 0)
+        if syncHistory.count > 50 {
+            syncHistory = Array(syncHistory.prefix(50))
         }
-#else
-        content()
-#endif
+        isSyncing = false
+    }
+
+    private func autoSync() async {
+        guard !isSyncing else { return }
+        await manualSync()
     }
 }
 
 #Preview {
-    ContentView()
-        .modelContainer(for: Item.self, inMemory: true)
+    ContentView(eventStore: ReadOnlyEventStore())
+        .modelContainer(for: [
+            CachedEvent.self,
+            ServerConfiguration.self,
+            CalendarSyncConfig.self,
+        ], inMemory: true)
+        .environment(SyncScheduler(
+            eventStore: ReadOnlyEventStore(),
+            syncEngine: SyncEngine(eventStore: ReadOnlyEventStore())
+        ))
 }
