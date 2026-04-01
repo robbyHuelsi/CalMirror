@@ -4,12 +4,14 @@ import EventKit
 
 struct CalendarSelectionView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
     @Query private var syncConfigs: [CalendarSyncConfig]
 
     let eventStore: EventReading
 
     @State private var calendars: [EKCalendar] = []
     @State private var hasAccess = false
+    @State private var isDenied = false
     @State private var isRequestingAccess = false
 
     var body: some View {
@@ -48,6 +50,11 @@ struct CalendarSelectionView: View {
         .task {
             await checkAccess()
         }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                Task { await checkAccess() }
+            }
+        }
     }
 
     // MARK: - Access Section
@@ -55,16 +62,36 @@ struct CalendarSelectionView: View {
     private var accessSection: some View {
         Section {
             VStack(spacing: 12) {
-                Image(systemName: "calendar.badge.exclamationmark")
+                Image(systemName: isDenied ? "calendar.badge.minus" : "calendar.badge.exclamationmark")
                     .font(.largeTitle)
                     .foregroundStyle(.secondary)
-                Text("Calendar access is required to read your events.")
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
-                Button("Grant Access") {
-                    Task { await requestAccess() }
+
+                if isDenied {
+                    Text("Calendar access was denied. Please enable it in the Settings app to continue.")
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.secondary)
+                    #if os(iOS) || os(visionOS)
+                    Button("Open Settings") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) {
+                            UIApplication.shared.open(url)
+                        }
+                    }
+                    #elseif os(macOS)
+                    Button("Open System Settings") {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                    #endif
+                } else {
+                    Text("Calendar access is required to read your events.")
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.secondary)
+                    Button("Grant Access") {
+                        Task { await requestAccess() }
+                    }
+                    .disabled(isRequestingAccess)
                 }
-                .disabled(isRequestingAccess)
             }
             .frame(maxWidth: .infinity)
             .padding()
@@ -85,6 +112,7 @@ struct CalendarSelectionView: View {
     private func checkAccess() async {
         let status = eventStore.authorizationStatus()
         hasAccess = status == .fullAccess
+        isDenied = status == .denied || status == .restricted
         if hasAccess {
             calendars = eventStore.availableCalendars()
         }
@@ -98,9 +126,12 @@ struct CalendarSelectionView: View {
             hasAccess = try await eventStore.requestAccess()
             if hasAccess {
                 calendars = eventStore.availableCalendars()
+            } else {
+                isDenied = true
             }
         } catch {
             hasAccess = false
+            isDenied = true
         }
     }
 
