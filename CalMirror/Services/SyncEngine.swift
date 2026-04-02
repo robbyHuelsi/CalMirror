@@ -44,7 +44,6 @@ final class SyncEngine {
         }
 
         isSyncing = true
-        defer { isSyncing = false }
 
         var result = SyncResult()
 
@@ -58,12 +57,14 @@ final class SyncEngine {
         } catch {
             result.errors.append("Failed to load server config: \(error.localizedDescription)")
             lastSyncResult = result
+            isSyncing = false
             return result
         }
 
         guard let serverConfig = serverConfigs.first else {
             result.errors.append("No active server configuration found")
             lastSyncResult = result
+            isSyncing = false
             return result
         }
 
@@ -73,6 +74,7 @@ final class SyncEngine {
         ) else {
             result.errors.append("No password found in Keychain")
             lastSyncResult = result
+            isSyncing = false
             return result
         }
 
@@ -86,12 +88,14 @@ final class SyncEngine {
         } catch {
             result.errors.append("Failed to load calendar configs: \(error.localizedDescription)")
             lastSyncResult = result
+            isSyncing = false
             return result
         }
 
         guard !calendarConfigs.isEmpty else {
             result.errors.append("No calendars selected for sync")
             lastSyncResult = result
+            isSyncing = false
             return result
         }
 
@@ -103,6 +107,7 @@ final class SyncEngine {
         guard !selectedCalendars.isEmpty else {
             result.errors.append("Selected calendars no longer available")
             lastSyncResult = result
+            isSyncing = false
             return result
         }
 
@@ -137,6 +142,7 @@ final class SyncEngine {
         } catch {
             result.errors.append("Failed to load cache: \(error.localizedDescription)")
             lastSyncResult = result
+            isSyncing = false
             return result
         }
 
@@ -152,6 +158,7 @@ final class SyncEngine {
         } catch {
             result.errors.append("CalDAV client error: \(error.localizedDescription)")
             lastSyncResult = result
+            isSyncing = false
             return result
         }
 
@@ -162,12 +169,15 @@ final class SyncEngine {
         let currentIdentifiers = Set(currentEvents.map { $0.eventIdentifier })
         let enabledCalendarIdentifiers = Set(calendarConfigs.map { $0.calendarIdentifier })
 
-        // 9. Process new and changed events
+        // 9. Prepare all network operations on the main actor (ICS generation etc.),
+        //    then execute them off the main actor to keep the UI responsive.
+        var pendingPuts: [PendingPut] = []
+        var pendingDeletes: [PendingDelete] = []
+
         for event in currentEvents {
             let prefix = configMap[event.calendar.calendarIdentifier]?.effectivePrefix
 
             if let cached = cachedByIdentifier[event.eventIdentifier] {
-                // Event exists in cache — check for changes
                 let newHash = CachedEvent.computeHash(
                     title: event.title ?? "",
                     startDate: event.startDate,
@@ -179,32 +189,8 @@ final class SyncEngine {
                 )
 
                 if newHash != cached.contentHash {
-                    // Event changed — update on server
                     let ics = ICSGenerator.generateICS(from: event, uid: cached.remoteUID, prefix: prefix)
-                    do {
-                        try await client.putEvent(icsData: ics, uid: cached.remoteUID)
-                        cached.title = event.title ?? ""
-                        cached.startDate = event.startDate
-                        cached.endDate = event.endDate
-                        cached.location = event.location
-                        cached.notes = event.notes
-                        cached.isAllDay = event.isAllDay
-                        cached.lastModified = Date()
-                        cached.recurrenceRuleDescription = event.recurrenceRules?.first?.description
-                        cached.contentHash = newHash
-                        cached.lastSyncedAt = Date()
-                        result.updated += 1
-                    } catch {
-                        result.errors.append("Update failed for '\(event.title ?? "")': \(error.localizedDescription)")
-                    }
-                }
-            } else {
-                // New event — create on server
-                let remoteUID = UUID().uuidString
-                let ics = ICSGenerator.generateICS(from: event, uid: remoteUID, prefix: prefix)
-                do {
-                    try await client.putEvent(icsData: ics, uid: remoteUID)
-                    let cached = CachedEvent(
+                    pendingPuts.append(PendingPut(
                         eventIdentifier: event.eventIdentifier,
                         calendarIdentifier: event.calendar.calendarIdentifier,
                         title: event.title ?? "",
@@ -213,24 +199,38 @@ final class SyncEngine {
                         location: event.location,
                         notes: event.notes,
                         isAllDay: event.isAllDay,
-                        lastModified: Date(),
                         recurrenceRuleDescription: event.recurrenceRules?.first?.description,
-                        remoteUID: remoteUID
-                    )
-                    modelContext.insert(cached)
-                    result.created += 1
-                } catch {
-                    result.errors.append("Create failed for '\(event.title ?? "")': \(error.localizedDescription)")
+                        contentHash: newHash,
+                        remoteUID: cached.remoteUID,
+                        icsData: ics,
+                        isNew: false
+                    ))
                 }
+            } else {
+                let remoteUID = UUID().uuidString
+                let ics = ICSGenerator.generateICS(from: event, uid: remoteUID, prefix: prefix)
+                pendingPuts.append(PendingPut(
+                    eventIdentifier: event.eventIdentifier,
+                    calendarIdentifier: event.calendar.calendarIdentifier,
+                    title: event.title ?? "",
+                    startDate: event.startDate,
+                    endDate: event.endDate,
+                    location: event.location,
+                    notes: event.notes,
+                    isAllDay: event.isAllDay,
+                    recurrenceRuleDescription: event.recurrenceRules?.first?.description,
+                    contentHash: nil,
+                    remoteUID: remoteUID,
+                    icsData: ics,
+                    isNew: true
+                ))
             }
         }
 
-        // 10. Process deleted events and events outside time window
         for cached in cachedEvents {
             let stillEnabled = enabledCalendarIdentifiers.contains(cached.calendarIdentifier)
             let stillExists = currentIdentifiers.contains(cached.eventIdentifier)
 
-            // Check if event has fallen outside the configured time window
             var outsideTimeWindow = false
             if stillEnabled, let config = configMap[cached.calendarIdentifier] {
                 let past = config.pastComponent
@@ -243,17 +243,71 @@ final class SyncEngine {
             }
 
             if !stillExists || !stillEnabled || outsideTimeWindow {
-                do {
-                    try await client.deleteEvent(uid: cached.remoteUID)
-                    modelContext.delete(cached)
-                    result.deleted += 1
-                } catch {
-                    result.errors.append("Delete failed for '\(cached.title)': \(error.localizedDescription)")
-                }
+                pendingDeletes.append(PendingDelete(
+                    eventIdentifier: cached.eventIdentifier,
+                    remoteUID: cached.remoteUID,
+                    title: cached.title
+                ))
             }
         }
 
-        // 11. Save SwiftData changes
+        // 10. Execute all network I/O off the main actor
+        let networkResult = await Self.executeNetworkOperations(
+            client: client,
+            puts: pendingPuts,
+            deletes: pendingDeletes
+        )
+
+        // 11. Apply results back to SwiftData on the main actor
+        for putResult in networkResult.putResults {
+            if putResult.succeeded {
+                if putResult.isNew {
+                    let cached = CachedEvent(
+                        eventIdentifier: putResult.eventIdentifier,
+                        calendarIdentifier: putResult.calendarIdentifier,
+                        title: putResult.title,
+                        startDate: putResult.startDate,
+                        endDate: putResult.endDate,
+                        location: putResult.location,
+                        notes: putResult.notes,
+                        isAllDay: putResult.isAllDay,
+                        lastModified: Date(),
+                        recurrenceRuleDescription: putResult.recurrenceRuleDescription,
+                        remoteUID: putResult.remoteUID
+                    )
+                    modelContext.insert(cached)
+                    result.created += 1
+                } else if let cached = cachedByIdentifier[putResult.eventIdentifier] {
+                    cached.title = putResult.title
+                    cached.startDate = putResult.startDate
+                    cached.endDate = putResult.endDate
+                    cached.location = putResult.location
+                    cached.notes = putResult.notes
+                    cached.isAllDay = putResult.isAllDay
+                    cached.lastModified = Date()
+                    cached.recurrenceRuleDescription = putResult.recurrenceRuleDescription
+                    cached.contentHash = putResult.contentHash ?? cached.contentHash
+                    cached.lastSyncedAt = Date()
+                    result.updated += 1
+                }
+            } else if let error = putResult.error {
+                let action = putResult.isNew ? "Create" : "Update"
+                result.errors.append("\(action) failed for '\(putResult.title)': \(error)")
+            }
+        }
+
+        for deleteResult in networkResult.deleteResults {
+            if deleteResult.succeeded {
+                if let cached = cachedByIdentifier[deleteResult.eventIdentifier] {
+                    modelContext.delete(cached)
+                    result.deleted += 1
+                }
+            } else if let error = deleteResult.error {
+                result.errors.append("Delete failed for '\(deleteResult.title)': \(error)")
+            }
+        }
+
+        // 12. Save SwiftData changes
         do {
             try modelContext.save()
         } catch {
@@ -261,6 +315,129 @@ final class SyncEngine {
         }
 
         lastSyncResult = result
+        isSyncing = false
         return result
     }
+
+    /// Executes all network PUT and DELETE operations off the main actor.
+    nonisolated private static func executeNetworkOperations(
+        client: CalDAVClient,
+        puts: [PendingPut],
+        deletes: [PendingDelete]
+    ) async -> NetworkSyncResult {
+        var result = NetworkSyncResult(putResults: [], deleteResults: [])
+
+        for put in puts {
+            do {
+                try await client.putEvent(icsData: put.icsData, uid: put.remoteUID)
+                result.putResults.append(PutResult(
+                    eventIdentifier: put.eventIdentifier,
+                    calendarIdentifier: put.calendarIdentifier,
+                    title: put.title,
+                    startDate: put.startDate,
+                    endDate: put.endDate,
+                    location: put.location,
+                    notes: put.notes,
+                    isAllDay: put.isAllDay,
+                    recurrenceRuleDescription: put.recurrenceRuleDescription,
+                    contentHash: put.contentHash,
+                    remoteUID: put.remoteUID,
+                    isNew: put.isNew,
+                    succeeded: true,
+                    error: nil
+                ))
+            } catch {
+                result.putResults.append(PutResult(
+                    eventIdentifier: put.eventIdentifier,
+                    calendarIdentifier: put.calendarIdentifier,
+                    title: put.title,
+                    startDate: put.startDate,
+                    endDate: put.endDate,
+                    location: put.location,
+                    notes: put.notes,
+                    isAllDay: put.isAllDay,
+                    recurrenceRuleDescription: put.recurrenceRuleDescription,
+                    contentHash: put.contentHash,
+                    remoteUID: put.remoteUID,
+                    isNew: put.isNew,
+                    succeeded: false,
+                    error: error.localizedDescription
+                ))
+            }
+        }
+
+        for delete in deletes {
+            do {
+                try await client.deleteEvent(uid: delete.remoteUID)
+                result.deleteResults.append(DeleteResult(
+                    eventIdentifier: delete.eventIdentifier,
+                    title: delete.title,
+                    succeeded: true,
+                    error: nil
+                ))
+            } catch {
+                result.deleteResults.append(DeleteResult(
+                    eventIdentifier: delete.eventIdentifier,
+                    title: delete.title,
+                    succeeded: false,
+                    error: error.localizedDescription
+                ))
+            }
+        }
+
+        return result
+    }
+}
+
+// MARK: - Sendable value types for off-main-actor network operations
+
+private struct PendingPut: Sendable {
+    let eventIdentifier: String
+    let calendarIdentifier: String
+    let title: String
+    let startDate: Date
+    let endDate: Date
+    let location: String?
+    let notes: String?
+    let isAllDay: Bool
+    let recurrenceRuleDescription: String?
+    let contentHash: String?
+    let remoteUID: String
+    let icsData: String
+    let isNew: Bool
+}
+
+private struct PendingDelete: Sendable {
+    let eventIdentifier: String
+    let remoteUID: String
+    let title: String
+}
+
+private struct PutResult: Sendable {
+    let eventIdentifier: String
+    let calendarIdentifier: String
+    let title: String
+    let startDate: Date
+    let endDate: Date
+    let location: String?
+    let notes: String?
+    let isAllDay: Bool
+    let recurrenceRuleDescription: String?
+    let contentHash: String?
+    let remoteUID: String
+    let isNew: Bool
+    let succeeded: Bool
+    let error: String?
+}
+
+private struct DeleteResult: Sendable {
+    let eventIdentifier: String
+    let title: String
+    let succeeded: Bool
+    let error: String?
+}
+
+private struct NetworkSyncResult: Sendable {
+    var putResults: [PutResult]
+    var deleteResults: [DeleteResult]
 }
