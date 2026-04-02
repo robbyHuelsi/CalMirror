@@ -17,7 +17,21 @@ struct CalMirrorApp: App {
         do {
             return try ModelContainer(for: schema, configurations: [modelConfiguration])
         } catch {
-            fatalError("Could not create ModelContainer: \(error)")
+            // Schema migration failed — delete the incompatible store and retry
+            let storeURL = modelConfiguration.url
+            let related = [
+                storeURL,
+                storeURL.appendingPathExtension("shm"),
+                storeURL.appendingPathExtension("wal"),
+            ]
+            for url in related {
+                try? FileManager.default.removeItem(at: url)
+            }
+            do {
+                return try ModelContainer(for: schema, configurations: [modelConfiguration])
+            } catch {
+                fatalError("Could not create ModelContainer after reset: \(error)")
+            }
         }
     }()
 
