@@ -7,31 +7,13 @@ struct CalMirrorApp: App {
     @State private var syncScheduler: SyncScheduler
 
     var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            CachedEvent.self,
-            ServerConfiguration.self,
-            CalendarSyncConfig.self,
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
-
         do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
+            return try ModelContainer(
+                for: CachedEvent.self, ServerConfiguration.self, CalendarSyncConfig.self,
+                migrationPlan: CalMirrorMigrationPlan.self
+            )
         } catch {
-            // Schema migration failed — delete the incompatible store and retry
-            let storeURL = modelConfiguration.url
-            let related = [
-                storeURL,
-                storeURL.appendingPathExtension("shm"),
-                storeURL.appendingPathExtension("wal"),
-            ]
-            for url in related {
-                try? FileManager.default.removeItem(at: url)
-            }
-            do {
-                return try ModelContainer(for: schema, configurations: [modelConfiguration])
-            } catch {
-                fatalError("Could not create ModelContainer after reset: \(error)")
-            }
+            fatalError("Could not create ModelContainer: \(error)")
         }
     }()
 

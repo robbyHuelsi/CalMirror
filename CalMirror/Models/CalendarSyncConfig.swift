@@ -1,40 +1,8 @@
 import Foundation
-import SwiftData
 
-@Model
-final class CalendarSyncConfig {
-    @Attribute(.unique) var calendarIdentifier: String
-    var calendarName: String
-    var isEnabled: Bool
-    var isPrefixEnabled: Bool
-    var customPrefix: String?
-    var pastValue: Int
-    var pastUnit: String
-    var futureValue: Int
-    var futureUnit: String
+typealias CalendarSyncConfig = SchemaV1.CalendarSyncConfig
 
-    init(
-        calendarIdentifier: String,
-        calendarName: String,
-        isEnabled: Bool = false,
-        isPrefixEnabled: Bool = false,
-        customPrefix: String? = nil,
-        pastValue: Int = 1,
-        pastUnit: String = "weekOfYear",
-        futureValue: Int = 1,
-        futureUnit: String = "year"
-    ) {
-        self.calendarIdentifier = calendarIdentifier
-        self.calendarName = calendarName
-        self.isEnabled = isEnabled
-        self.isPrefixEnabled = isPrefixEnabled
-        self.customPrefix = customPrefix
-        self.pastValue = pastValue
-        self.pastUnit = pastUnit
-        self.futureValue = futureValue
-        self.futureUnit = futureUnit
-    }
-
+extension SchemaV1.CalendarSyncConfig {
     /// Returns the effective prefix string to prepend to event titles.
     /// Returns nil if prefix is disabled.
     var effectivePrefix: String? {
