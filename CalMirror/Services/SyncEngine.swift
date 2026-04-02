@@ -106,16 +106,28 @@ final class SyncEngine {
             return result
         }
 
-        // 4. Build prefix map
-        var prefixMap: [String: String?] = [:]
+        // 4. Build config lookup
+        var configMap: [String: CalendarSyncConfig] = [:]
         for config in calendarConfigs {
-            prefixMap[config.calendarIdentifier] = config.effectivePrefix
+            configMap[config.calendarIdentifier] = config
         }
 
-        // 5. Fetch events from EventKit (1 month back, 6 months forward)
-        let startDate = Calendar.current.date(byAdding: .month, value: -1, to: Date()) ?? Date()
-        let endDate = Calendar.current.date(byAdding: .month, value: 6, to: Date()) ?? Date()
-        let currentEvents = eventStore.fetchEvents(from: startDate, to: endDate, calendars: selectedCalendars)
+        // 5. Fetch events from EventKit per calendar using configured time windows
+        let now = Date()
+        let cal = Calendar.current
+        var currentEvents: [EKEvent] = []
+
+        for ekCalendar in selectedCalendars {
+            let config = configMap[ekCalendar.calendarIdentifier]
+            let past = config?.pastComponent ?? (.weekOfYear, 1)
+            let future = config?.futureComponent ?? (.year, 1)
+
+            let startDate = cal.date(byAdding: past.component, value: -past.value, to: now) ?? now
+            let endDate = cal.date(byAdding: future.component, value: future.value, to: now) ?? now
+
+            let events = eventStore.fetchEvents(from: startDate, to: endDate, calendars: [ekCalendar])
+            currentEvents.append(contentsOf: events)
+        }
 
         // 6. Load cached events from SwiftData
         let cachedEvents: [CachedEvent]
@@ -152,7 +164,7 @@ final class SyncEngine {
 
         // 9. Process new and changed events
         for event in currentEvents {
-            let prefix = prefixMap[event.calendar.calendarIdentifier] ?? nil
+            let prefix = configMap[event.calendar.calendarIdentifier]?.effectivePrefix
 
             if let cached = cachedByIdentifier[event.eventIdentifier] {
                 // Event exists in cache — check for changes
@@ -213,12 +225,24 @@ final class SyncEngine {
             }
         }
 
-        // 10. Process deleted events
+        // 10. Process deleted events and events outside time window
         for cached in cachedEvents {
             let stillEnabled = enabledCalendarIdentifiers.contains(cached.calendarIdentifier)
             let stillExists = currentIdentifiers.contains(cached.eventIdentifier)
 
-            if !stillExists || !stillEnabled {
+            // Check if event has fallen outside the configured time window
+            var outsideTimeWindow = false
+            if stillEnabled, let config = configMap[cached.calendarIdentifier] {
+                let past = config.pastComponent
+                let future = config.futureComponent
+                let pastCutoff = cal.date(byAdding: past.component, value: -past.value, to: now) ?? now
+                let futureCutoff = cal.date(byAdding: future.component, value: future.value, to: now) ?? now
+                if cached.endDate < pastCutoff || cached.startDate > futureCutoff {
+                    outsideTimeWindow = true
+                }
+            }
+
+            if !stillExists || !stillEnabled || outsideTimeWindow {
                 do {
                     try await client.deleteEvent(uid: cached.remoteUID)
                     modelContext.delete(cached)

@@ -2,6 +2,81 @@ import SwiftUI
 import SwiftData
 import EventKit
 
+/// A single step in the time range picker, storing a calendar value and unit.
+struct TimeRangeStep: Equatable {
+    let value: Int
+    let unit: String  // matches stored raw strings: "day", "weekOfYear", "month", "year"
+    let label: String
+}
+
+/// Predefined time range steps the user can cycle through via Stepper.
+private enum TimeRangeSteps {
+    static let steps: [TimeRangeStep] = [
+        TimeRangeStep(value: 1, unit: "day",        label: "1 day"),
+        TimeRangeStep(value: 2, unit: "day",        label: "2 days"),
+        TimeRangeStep(value: 3, unit: "day",        label: "3 days"),
+        TimeRangeStep(value: 4, unit: "day",        label: "4 days"),
+        TimeRangeStep(value: 5, unit: "day",        label: "5 days"),
+        TimeRangeStep(value: 6, unit: "day",        label: "6 days"),
+        TimeRangeStep(value: 1, unit: "weekOfYear", label: "1 week"),
+        TimeRangeStep(value: 2, unit: "weekOfYear", label: "2 weeks"),
+        TimeRangeStep(value: 3, unit: "weekOfYear", label: "3 weeks"),
+        TimeRangeStep(value: 1, unit: "month",      label: "1 month"),
+        TimeRangeStep(value: 2, unit: "month",      label: "2 months"),
+        TimeRangeStep(value: 3, unit: "month",      label: "3 months"),
+        TimeRangeStep(value: 4, unit: "month",      label: "4 months"),
+        TimeRangeStep(value: 5, unit: "month",      label: "5 months"),
+        TimeRangeStep(value: 6, unit: "month",      label: "½ year"),
+        TimeRangeStep(value: 1, unit: "year",       label: "1 year"),
+        TimeRangeStep(value: 18, unit: "month",     label: "1½ years"),
+        TimeRangeStep(value: 2, unit: "year",       label: "2 years"),
+        TimeRangeStep(value: 3, unit: "year",       label: "3 years"),
+        TimeRangeStep(value: 4, unit: "year",       label: "4 years"),
+    ]
+
+    static func index(forValue value: Int, unit: String) -> Int {
+        if let idx = steps.firstIndex(where: { $0.value == value && $0.unit == unit }) {
+            return idx
+        }
+        // Fallback: find nearest by converting everything to approximate days
+        let targetDays = approximateDays(value: value, unit: unit)
+        return steps.indices.min(by: {
+            abs(approximateDays(step: steps[$0]) - targetDays) <
+            abs(approximateDays(step: steps[$1]) - targetDays)
+        }) ?? 0
+    }
+
+    static func next(after index: Int) -> Int {
+        min(index + 1, steps.count - 1)
+    }
+
+    static func previous(before index: Int) -> Int {
+        max(index - 1, 0)
+    }
+
+    static func isAtMin(_ index: Int) -> Bool {
+        index <= 0
+    }
+
+    static func isAtMax(_ index: Int) -> Bool {
+        index >= steps.count - 1
+    }
+
+    private static func approximateDays(step: TimeRangeStep) -> Int {
+        approximateDays(value: step.value, unit: step.unit)
+    }
+
+    private static func approximateDays(value: Int, unit: String) -> Int {
+        switch unit {
+        case "day": return value
+        case "weekOfYear": return value * 7
+        case "month": return value * 30
+        case "year": return value * 365
+        default: return value
+        }
+    }
+}
+
 struct CalendarSelectionView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
@@ -26,8 +101,8 @@ struct CalendarSelectionView: View {
                 )
             } else {
                 ForEach(calendarsBySource, id: \.key) { source, cals in
-                    Section(source) {
-                        ForEach(cals, id: \.calendarIdentifier) { calendar in
+                    ForEach(Array(cals.enumerated()), id: \.element.calendarIdentifier) { index, calendar in
+                        Section {
                             CalendarRow(
                                 calendar: calendar,
                                 config: configFor(calendar),
@@ -39,8 +114,18 @@ struct CalendarSelectionView: View {
                                 },
                                 onPrefixChanged: { prefix in
                                     updatePrefix(calendar: calendar, prefix: prefix)
+                                },
+                                onPastChanged: { step in
+                                    updatePast(calendar: calendar, step: step)
+                                },
+                                onFutureChanged: { step in
+                                    updateFuture(calendar: calendar, step: step)
                                 }
                             )
+                        } header: {
+                            if index == 0 {
+                                Text(source)
+                            }
                         }
                     }
                 }
@@ -153,6 +238,20 @@ struct CalendarSelectionView: View {
         try? modelContext.save()
     }
 
+    private func updatePast(calendar: EKCalendar, step: TimeRangeStep) {
+        let config = getOrCreateConfig(for: calendar)
+        config.pastValue = step.value
+        config.pastUnit = step.unit
+        try? modelContext.save()
+    }
+
+    private func updateFuture(calendar: EKCalendar, step: TimeRangeStep) {
+        let config = getOrCreateConfig(for: calendar)
+        config.futureValue = step.value
+        config.futureUnit = step.unit
+        try? modelContext.save()
+    }
+
     private func getOrCreateConfig(for calendar: EKCalendar) -> CalendarSyncConfig {
         if let existing = syncConfigs.first(where: { $0.calendarIdentifier == calendar.calendarIdentifier }) {
             return existing
@@ -174,13 +273,17 @@ private struct CalendarRow: View {
     let onToggleSync: (Bool) -> Void
     let onTogglePrefix: (Bool) -> Void
     let onPrefixChanged: (String) -> Void
+    let onPastChanged: (TimeRangeStep) -> Void
+    let onFutureChanged: (TimeRangeStep) -> Void
 
     @State private var isEnabled: Bool = false
     @State private var isPrefixEnabled: Bool = false
     @State private var prefixText: String = ""
+    @State private var pastIndex: Int = 0
+    @State private var futureIndex: Int = 0
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             Toggle(isOn: $isEnabled) {
                 HStack(spacing: 8) {
                     Circle()
@@ -197,6 +300,7 @@ private struct CalendarRow: View {
                 Toggle("Prefix", isOn: $isPrefixEnabled)
                     .font(.subheadline)
                     .padding(.leading, 20)
+                    .padding(.top, 8)
                     .onChange(of: isPrefixEnabled) { _, newValue in
                         onTogglePrefix(newValue)
                         if newValue && prefixText.isEmpty {
@@ -218,13 +322,105 @@ private struct CalendarRow: View {
                         .foregroundStyle(.secondary)
                         .padding(.leading, 20)
                 }
+
+                Divider()
+                    .padding(.leading, 20)
+                    .padding(.top, 8)
+
+                // Past limit
+                timeRangeStepper(
+                    title: "Past",
+                    label: TimeRangeSteps.steps[pastIndex].label,
+                    isAtMin: TimeRangeSteps.isAtMin(pastIndex),
+                    isAtMax: TimeRangeSteps.isAtMax(pastIndex),
+                    onDecrement: {
+                        pastIndex = TimeRangeSteps.previous(before: pastIndex)
+                        onPastChanged(TimeRangeSteps.steps[pastIndex])
+                    },
+                    onIncrement: {
+                        pastIndex = TimeRangeSteps.next(after: pastIndex)
+                        onPastChanged(TimeRangeSteps.steps[pastIndex])
+                    }
+                )
+
+                // Future limit
+                timeRangeStepper(
+                    title: "Future",
+                    label: TimeRangeSteps.steps[futureIndex].label,
+                    isAtMin: TimeRangeSteps.isAtMin(futureIndex),
+                    isAtMax: TimeRangeSteps.isAtMax(futureIndex),
+                    onDecrement: {
+                        futureIndex = TimeRangeSteps.previous(before: futureIndex)
+                        onFutureChanged(TimeRangeSteps.steps[futureIndex])
+                    },
+                    onIncrement: {
+                        futureIndex = TimeRangeSteps.next(after: futureIndex)
+                        onFutureChanged(TimeRangeSteps.steps[futureIndex])
+                    }
+                )
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 8)
         .onAppear {
             isEnabled = config?.isEnabled ?? false
             isPrefixEnabled = config?.isPrefixEnabled ?? false
             prefixText = config?.customPrefix ?? calendar.title
+            pastIndex = TimeRangeSteps.index(
+                forValue: config?.pastValue ?? 1,
+                unit: config?.pastUnit ?? "weekOfYear"
+            )
+            futureIndex = TimeRangeSteps.index(
+                forValue: config?.futureValue ?? 1,
+                unit: config?.futureUnit ?? "year"
+            )
         }
+    }
+
+    @ViewBuilder
+    private func timeRangeStepper(
+        title: String,
+        label: String,
+        isAtMin: Bool,
+        isAtMax: Bool,
+        onDecrement: @escaping () -> Void,
+        onIncrement: @escaping () -> Void
+    ) -> some View {
+        HStack {
+            Text("\(title): \(label)")
+                .font(.subheadline)
+            Spacer()
+            HStack(spacing: 0) {
+                Button {
+                    onDecrement()
+                } label: {
+                    Image(systemName: "minus")
+                        .font(.body.weight(.medium))
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .disabled(isAtMin)
+
+                Divider()
+                    .frame(height: 16)
+
+                Button {
+                    onIncrement()
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.body.weight(.medium))
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .disabled(isAtMax)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.accentColor)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color(.tertiarySystemFill))
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .padding(.leading, 20)
     }
 }
