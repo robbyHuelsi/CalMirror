@@ -1,0 +1,83 @@
+{
+  "version": "2.0.0",
+  "inputs": [
+    {
+      "id": "simulator",
+      "type": "pickString",
+      "description": "Choose a simulator",
+      "options": [
+        "iPhone 17 Pro",
+        "iPhone 17 Pro Max",
+        "iPhone 17",
+        "iPad Pro 11-inch (M4)",
+        "iPad Air 11-inch (M2)",
+        "iPad mini (A17 Pro)"
+      ],
+      "default": "iPhone 17"
+    }
+  ],
+  "tasks": [
+    {
+      "label": "Build CalMirror (Debug)",
+      "type": "shell",
+      "command": "xcodebuild",
+      "args": [
+        "-scheme", "CalMirror",
+        "-configuration", "Debug",
+        "-derivedDataPath", "${workspaceFolder}/.build",
+        "build"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Run in Simulator",
+      "type": "shell",
+      "command": "xcodebuild -scheme CalMirror -configuration Debug -destination 'platform=iOS Simulator,name=${input:simulator}' -derivedDataPath ${workspaceFolder}/.build build && xcrun simctl boot '${input:simulator}' 2>/dev/null; open -a Simulator && APP_PATH=$(find ${workspaceFolder}/.build -name 'CalMirror.app' -path '*/iphonesimulator/*' | head -1) && xcrun simctl install '${input:simulator}' \"$APP_PATH\" && xcrun simctl launch '${input:simulator}' $(grep -m1 'PRODUCT_BUNDLE_IDENTIFIER' CalMirror.xcodeproj/project.pbxproj | sed 's/.*= \"\\(.*\\)\";/\\1/' | sed 's/$(DEVELOPMENT_TEAM)//' )",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Build CalMirror (Release)",
+      "type": "shell",
+      "command": "xcodebuild",
+      "args": [
+        "-scheme", "CalMirror",
+        "-configuration", "Release",
+        "-derivedDataPath", "${workspaceFolder}/.build",
+        "build"
+      ],
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Clean Build",
+      "type": "shell",
+      "command": "xcodebuild",
+      "args": [
+        "-scheme", "CalMirror",
+        "-configuration", "Debug",
+        "-derivedDataPath", "${workspaceFolder}/.build",
+        "clean", "build"
+      ],
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Run Tests",
+      "type": "shell",
+      "command": "xcodebuild",
+      "args": [
+        "-scheme", "CalMirror",
+        "-configuration", "Debug",
+        "-derivedDataPath", "${workspaceFolder}/.build",
+        "test"
+      ],
+      "group": "test",
+      "problemMatcher": []
+    }
+  ]
+}
