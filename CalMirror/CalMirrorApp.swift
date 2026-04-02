@@ -5,6 +5,7 @@ import SwiftData
 struct CalMirrorApp: App {
     private let eventStore: ReadOnlyEventStore
     @State private var syncScheduler: SyncScheduler
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
 
     var sharedModelContainer: ModelContainer = {
         do {
@@ -26,11 +27,19 @@ struct CalMirrorApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView(eventStore: eventStore)
+            if hasCompletedOnboarding {
+                ContentView(eventStore: eventStore)
+                    .environment(syncScheduler)
+                    .task {
+                        await startScheduler()
+                    }
+            } else {
+                WelcomeWizardView(
+                    hasCompletedOnboarding: $hasCompletedOnboarding,
+                    eventStore: eventStore
+                )
                 .environment(syncScheduler)
-                .task {
-                    await startScheduler()
-                }
+            }
         }
         .modelContainer(sharedModelContainer)
         #if os(iOS)
