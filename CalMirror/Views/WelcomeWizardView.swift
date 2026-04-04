@@ -28,7 +28,9 @@ struct WelcomeWizardView: View {
                 serverSettingsPage.tag(4)
                 completionPage.tag(5)
             }
+            #if os(iOS)
             .tabViewStyle(.page(indexDisplayMode: .never))
+            #endif
             .animation(.easeInOut(duration: 0.3), value: currentStep)
         }
     }
@@ -39,7 +41,7 @@ struct WelcomeWizardView: View {
         HStack(spacing: 8) {
             ForEach(0..<totalSteps, id: \.self) { step in
                 Circle()
-                    .fill(step <= currentStep ? Color.accentColor : Color(.systemGray4))
+                    .fill(step <= currentStep ? Color.accentColor : Color.secondary.opacity(0.3))
                     .frame(width: 8, height: 8)
                     .scaleEffect(step == currentStep ? 1.2 : 1.0)
                     .animation(.spring(response: 0.3), value: currentStep)
