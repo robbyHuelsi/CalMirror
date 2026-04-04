@@ -15,7 +15,6 @@ enum ICSGenerator {
         lines.append("VERSION:2.0")
         lines.append("PRODID:-//CalMirror//CalMirror//EN")
         lines.append("CALSCALE:GREGORIAN")
-        lines.append("METHOD:PUBLISH")
 
         lines.append("BEGIN:VEVENT")
         lines.append("UID:\(uid)")
