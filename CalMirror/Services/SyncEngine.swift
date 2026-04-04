@@ -40,17 +40,27 @@ final class SyncEngine {
         self.eventStore = eventStore
     }
 
-    /// Performs a full sync: reads events from EventKit, compares with cache, and pushes changes to CalDAV.
-    func performSync(modelContext: ModelContext) async -> SyncResult {
-        guard !isSyncing else {
-            logger.warning("Sync skipped — already in progress")
-            return SyncResult(errors: ["Sync already in progress"])
-        }
+    // MARK: - Sync Plan Analysis
 
-        logger.info("========== SYNC STARTED ==========")
-        isSyncing = true
+    /// Holds the intermediate state needed to execute a sync after analysis.
+    struct AnalysisContext {
+        let plan: SyncPlan
+        let client: CalDAVClient
+        let pendingPuts: [PendingPut]
+        let pendingDeletes: [PendingDelete]
+        let cachedByIdentifier: [String: CachedEvent]
+    }
 
-        var result = SyncResult()
+    /// Analyzes the current sync state without performing any network PUT/DELETE operations.
+    /// Used by EventsOverviewView to display per-event sync status.
+    func analyzeSyncPlan(modelContext: ModelContext) async -> SyncPlan {
+        let (plan, _) = await analyzeInternal(modelContext: modelContext)
+        return plan
+    }
+
+    /// Internal analysis that returns both the plan (for display) and the context (for execution).
+    private func analyzeInternal(modelContext: ModelContext) async -> (SyncPlan, AnalysisContext?) {
+        var errors: [String] = []
 
         // 1. Load server configuration
         let serverConfigs: [ServerConfiguration]
@@ -60,32 +70,20 @@ final class SyncEngine {
             )
             serverConfigs = try modelContext.fetch(descriptor)
         } catch {
-            result.errors.append("Failed to load server config: \(error.localizedDescription)")
-            lastSyncResult = result
-            isSyncing = false
-            return result
+            return (SyncPlan(entries: [], remoteUIDsAvailable: false, errors: ["Failed to load server config: \(error.localizedDescription)"]), nil)
         }
 
         guard let serverConfig = serverConfigs.first else {
-            logger.error("No active server configuration found")
-            result.errors.append("No active server configuration found")
-            lastSyncResult = result
-            isSyncing = false
-            return result
+            return (SyncPlan(entries: [], remoteUIDsAvailable: false, errors: ["No active server configuration found"]), nil)
         }
-        logger.info("Server: \(serverConfig.serverURL), path: \(serverConfig.calendarPath), user: \(serverConfig.username)")
 
-        guard let password = KeychainHelper.load(
+        let password = KeychainHelper.load(
             service: serverConfig.keychainServiceID,
             account: serverConfig.username
-        ) else {
-            logger.error("No password in Keychain for service=\(serverConfig.keychainServiceID), account=\(serverConfig.username)")
-            result.errors.append("No password found in Keychain")
-            lastSyncResult = result
-            isSyncing = false
-            return result
+        )
+        guard let password else {
+            return (SyncPlan(entries: [], remoteUIDsAvailable: false, errors: ["No password found in Keychain"]), nil)
         }
-        logger.info("Password loaded from Keychain (length=\(password.count))")
 
         // 2. Load enabled calendars
         let calendarConfigs: [CalendarSyncConfig]
@@ -95,20 +93,12 @@ final class SyncEngine {
             )
             calendarConfigs = try modelContext.fetch(descriptor)
         } catch {
-            result.errors.append("Failed to load calendar configs: \(error.localizedDescription)")
-            lastSyncResult = result
-            isSyncing = false
-            return result
+            return (SyncPlan(entries: [], remoteUIDsAvailable: false, errors: ["Failed to load calendar configs: \(error.localizedDescription)"]), nil)
         }
 
         guard !calendarConfigs.isEmpty else {
-            logger.error("No calendars selected for sync")
-            result.errors.append("No calendars selected for sync")
-            lastSyncResult = result
-            isSyncing = false
-            return result
+            return (SyncPlan(entries: [], remoteUIDsAvailable: false, errors: ["No calendars selected for sync"]), nil)
         }
-        logger.info("Enabled calendars: \(calendarConfigs.count)")
 
         // 3. Resolve EKCalendar objects
         let selectedCalendars = calendarConfigs.compactMap { config in
@@ -116,13 +106,8 @@ final class SyncEngine {
         }
 
         guard !selectedCalendars.isEmpty else {
-            logger.error("Selected calendars no longer available (IDs: \(calendarConfigs.map { $0.calendarIdentifier }))")
-            result.errors.append("Selected calendars no longer available")
-            lastSyncResult = result
-            isSyncing = false
-            return result
+            return (SyncPlan(entries: [], remoteUIDsAvailable: false, errors: ["Selected calendars no longer available"]), nil)
         }
-        logger.info("Resolved \(selectedCalendars.count) EKCalendars: \(selectedCalendars.map { $0.title })")
 
         // 4. Build config lookup
         var configMap: [String: CalendarSyncConfig] = [:]
@@ -144,10 +129,8 @@ final class SyncEngine {
             let endDate = cal.date(byAdding: future.component, value: future.value, to: now) ?? now
 
             let events = eventStore.fetchEvents(from: startDate, to: endDate, calendars: [ekCalendar])
-            logger.info("Calendar '\(ekCalendar.title)': \(events.count) events (\(startDate) → \(endDate))")
             currentEvents.append(contentsOf: events)
         }
-        logger.info("Total events from EventKit: \(currentEvents.count)")
 
         // 6. Load cached events from SwiftData
         let cachedEvents: [CachedEvent]
@@ -155,13 +138,8 @@ final class SyncEngine {
             let descriptor = FetchDescriptor<CachedEvent>()
             cachedEvents = try modelContext.fetch(descriptor)
         } catch {
-            result.errors.append("Failed to load cache: \(error.localizedDescription)")
-            lastSyncResult = result
-            isSyncing = false
-            return result
+            return (SyncPlan(entries: [], remoteUIDsAvailable: false, errors: ["Failed to load cache: \(error.localizedDescription)"]), nil)
         }
-
-        logger.info("Cached events in DB: \(cachedEvents.count)")
 
         // 7. Create CalDAV client
         let client: CalDAVClient
@@ -173,22 +151,35 @@ final class SyncEngine {
                 password: password
             )
         } catch {
-            logger.error("CalDAV client init failed: \(error.localizedDescription)")
-            result.errors.append("CalDAV client error: \(error.localizedDescription)")
-            lastSyncResult = result
-            isSyncing = false
-            return result
+            return (SyncPlan(entries: [], remoteUIDsAvailable: false, errors: ["CalDAV client error: \(error.localizedDescription)"]), nil)
         }
 
-        // 8. Build lookup maps
+        // 8. Fetch remote event metadata for orphan detection (graceful degradation)
+        var remoteMetadata: [RemoteEventMetadata]?
+        do {
+            remoteMetadata = try await client.fetchRemoteEventMetadata()
+        } catch {
+            logger.warning("Could not fetch remote event metadata, falling back to UIDs: \(error.localizedDescription)")
+            // Fallback: try listEventUIDs for servers that don't support REPORT
+            do {
+                let uids = try await client.listEventUIDs()
+                remoteMetadata = uids.map { RemoteEventMetadata(uid: $0, title: $0, startDate: .distantPast, endDate: .distantPast, isAllDay: false) }
+            } catch {
+                logger.warning("Could not list remote UIDs either: \(error.localizedDescription)")
+                errors.append("Could not list server events: \(error.localizedDescription)")
+            }
+        }
+
+        // 9. Build lookup maps
         let cachedByIdentifier = Dictionary(
             uniqueKeysWithValues: cachedEvents.map { ($0.eventIdentifier, $0) }
         )
         let currentIdentifiers = Set(currentEvents.map { $0.eventIdentifier })
         let enabledCalendarIdentifiers = Set(calendarConfigs.map { $0.calendarIdentifier })
+        let cachedRemoteUIDs = Set(cachedEvents.map { $0.remoteUID })
 
-        // 9. Prepare all network operations on the main actor (ICS generation etc.),
-        //    then execute them off the main actor to keep the UI responsive.
+        // 10. Classify events and build plan entries + pending operations
+        var entries: [SyncPlanEntry] = []
         var pendingPuts: [PendingPut] = []
         var pendingDeletes: [PendingDelete] = []
 
@@ -207,6 +198,18 @@ final class SyncEngine {
                 )
 
                 if newHash != cached.contentHash {
+                    // Modified — cached but content changed
+                    entries.append(SyncPlanEntry(
+                        id: event.eventIdentifier,
+                        title: event.title ?? "",
+                        startDate: event.startDate,
+                        endDate: event.endDate,
+                        isAllDay: event.isAllDay,
+                        calendarIdentifier: event.calendar.calendarIdentifier,
+                        remoteUID: cached.remoteUID,
+                        status: .modified,
+                        prefix: prefix
+                    ))
                     let ics = ICSGenerator.generateICS(from: event, uid: cached.remoteUID, prefix: prefix)
                     pendingPuts.append(PendingPut(
                         eventIdentifier: event.eventIdentifier,
@@ -223,8 +226,22 @@ final class SyncEngine {
                         icsData: ics,
                         isNew: false
                     ))
+                } else {
+                    // Synced — cached and hash matches
+                    entries.append(SyncPlanEntry(
+                        id: event.eventIdentifier,
+                        title: event.title ?? "",
+                        startDate: event.startDate,
+                        endDate: event.endDate,
+                        isAllDay: event.isAllDay,
+                        calendarIdentifier: event.calendar.calendarIdentifier,
+                        remoteUID: cached.remoteUID,
+                        status: .synced,
+                        prefix: prefix
+                    ))
                 }
             } else {
+                // Pending — not yet in cache
                 let remoteUID = UUID().uuidString
                 let ics = ICSGenerator.generateICS(from: event, uid: remoteUID, prefix: prefix)
                 let newEventHash = CachedEvent.computeHash(
@@ -236,6 +253,18 @@ final class SyncEngine {
                     isAllDay: event.isAllDay,
                     recurrenceRuleDescription: event.recurrenceRules?.first?.description
                 )
+
+                entries.append(SyncPlanEntry(
+                    id: event.eventIdentifier,
+                    title: event.title ?? "",
+                    startDate: event.startDate,
+                    endDate: event.endDate,
+                    isAllDay: event.isAllDay,
+                    calendarIdentifier: event.calendar.calendarIdentifier,
+                    remoteUID: remoteUID,
+                    status: .pending,
+                    prefix: prefix
+                ))
                 pendingPuts.append(PendingPut(
                     eventIdentifier: event.eventIdentifier,
                     calendarIdentifier: event.calendar.calendarIdentifier,
@@ -254,6 +283,7 @@ final class SyncEngine {
             }
         }
 
+        // Detect pending deletes
         for cached in cachedEvents {
             let stillEnabled = enabledCalendarIdentifiers.contains(cached.calendarIdentifier)
             let stillExists = currentIdentifiers.contains(cached.eventIdentifier)
@@ -270,6 +300,17 @@ final class SyncEngine {
             }
 
             if !stillExists || !stillEnabled || outsideTimeWindow {
+                entries.append(SyncPlanEntry(
+                    id: "delete-\(cached.eventIdentifier)",
+                    title: cached.title,
+                    startDate: cached.startDate,
+                    endDate: cached.endDate,
+                    isAllDay: cached.isAllDay,
+                    calendarIdentifier: cached.calendarIdentifier,
+                    remoteUID: cached.remoteUID,
+                    status: .pendingDelete,
+                    prefix: configMap[cached.calendarIdentifier]?.effectivePrefix
+                ))
                 pendingDeletes.append(PendingDelete(
                     eventIdentifier: cached.eventIdentifier,
                     remoteUID: cached.remoteUID,
@@ -277,6 +318,71 @@ final class SyncEngine {
                 ))
             }
         }
+
+        // Detect orphaned events (on server but not tracked locally)
+        if let remoteMetadata {
+            let remoteUIDs = Set(remoteMetadata.map { $0.uid })
+            let orphanedUIDs = remoteUIDs.subtracting(cachedRemoteUIDs)
+            let metaByUID = Dictionary(remoteMetadata.map { ($0.uid, $0) }, uniquingKeysWith: { first, _ in first })
+            for uid in orphanedUIDs {
+                let meta = metaByUID[uid]
+                entries.append(SyncPlanEntry(
+                    id: "orphan-\(uid)",
+                    title: meta?.title ?? uid,
+                    startDate: meta?.startDate ?? .distantPast,
+                    endDate: meta?.endDate ?? .distantPast,
+                    isAllDay: meta?.isAllDay ?? false,
+                    calendarIdentifier: nil,
+                    remoteUID: uid,
+                    status: .orphaned,
+                    prefix: nil
+                ))
+            }
+        }
+
+        let plan = SyncPlan(
+            entries: entries,
+            remoteUIDsAvailable: remoteMetadata != nil,
+            errors: errors
+        )
+
+        let context = AnalysisContext(
+            plan: plan,
+            client: client,
+            pendingPuts: pendingPuts,
+            pendingDeletes: pendingDeletes,
+            cachedByIdentifier: cachedByIdentifier
+        )
+
+        return (plan, context)
+    }
+
+    // MARK: - Full Sync
+
+    /// Performs a full sync: reads events from EventKit, compares with cache, and pushes changes to CalDAV.
+    func performSync(modelContext: ModelContext) async -> SyncResult {
+        guard !isSyncing else {
+            logger.warning("Sync skipped — already in progress")
+            return SyncResult(errors: ["Sync already in progress"])
+        }
+
+        logger.info("========== SYNC STARTED ==========")
+        isSyncing = true
+
+        let (plan, analysisContext) = await analyzeInternal(modelContext: modelContext)
+
+        guard let ctx = analysisContext else {
+            let result = SyncResult(errors: plan.errors)
+            lastSyncResult = result
+            isSyncing = false
+            return result
+        }
+
+        var result = SyncResult()
+
+        let pendingPuts = ctx.pendingPuts
+        let pendingDeletes = ctx.pendingDeletes
+        let cachedByIdentifier = ctx.cachedByIdentifier
 
         logger.info("Pending operations: \(pendingPuts.count) PUTs, \(pendingDeletes.count) DELETEs")
         for put in pendingPuts {
@@ -286,14 +392,14 @@ final class SyncEngine {
             logger.debug("  DELETE: '\(del.title)' uid=\(del.remoteUID)")
         }
 
-        // 10. Execute all network I/O off the main actor
+        // Execute all network I/O off the main actor
         let networkResult = await Self.executeNetworkOperations(
-            client: client,
+            client: ctx.client,
             puts: pendingPuts,
             deletes: pendingDeletes
         )
 
-        // 11. Apply results back to SwiftData on the main actor
+        // Apply results back to SwiftData on the main actor
         for putResult in networkResult.putResults {
             if putResult.succeeded {
                 if putResult.isNew {
@@ -351,7 +457,7 @@ final class SyncEngine {
             }
         }
 
-        // 12. Save SwiftData changes
+        // Save SwiftData changes
         do {
             try modelContext.save()
         } catch {
@@ -442,7 +548,7 @@ final class SyncEngine {
 
 // MARK: - Sendable value types for off-main-actor network operations
 
-private struct PendingPut: Sendable {
+struct PendingPut: Sendable {
     let eventIdentifier: String
     let calendarIdentifier: String
     let title: String
@@ -458,13 +564,13 @@ private struct PendingPut: Sendable {
     let isNew: Bool
 }
 
-private struct PendingDelete: Sendable {
+struct PendingDelete: Sendable {
     let eventIdentifier: String
     let remoteUID: String
     let title: String
 }
 
-private struct PutResult: Sendable {
+struct PutResult: Sendable {
     let eventIdentifier: String
     let calendarIdentifier: String
     let title: String
@@ -481,14 +587,14 @@ private struct PutResult: Sendable {
     let error: String?
 }
 
-private struct DeleteResult: Sendable {
+struct DeleteResult: Sendable {
     let eventIdentifier: String
     let title: String
     let succeeded: Bool
     let error: String?
 }
 
-private struct NetworkSyncResult: Sendable {
+struct NetworkSyncResult: Sendable {
     var putResults: [PutResult]
     var deleteResults: [DeleteResult]
 }

@@ -2,35 +2,42 @@ import SwiftUI
 import SwiftData
 
 struct EventsOverviewView: View {
-    @Query(sort: \CachedEvent.startDate) private var cachedEvents: [CachedEvent]
-    @Query private var calendarConfigs: [CalendarSyncConfig]
+    @Environment(\.modelContext) private var modelContext
+    @Environment(SyncScheduler.self) private var syncScheduler
 
-    private var configMap: [String: CalendarSyncConfig] {
-        Dictionary(uniqueKeysWithValues: calendarConfigs.map { ($0.calendarIdentifier, $0) })
+    @State private var syncPlan: SyncPlan?
+    @State private var isAnalyzing = false
+    @State private var deleteConfirmation: SyncPlanEntry?
+
+    private var displayEntries: [SyncPlanEntry] {
+        syncPlan?.entries ?? []
     }
 
-    private var groupedEvents: [(group: EventTimeGroup, events: [CachedEvent])] {
+    private var groupedEntries: [(group: EventTimeGroup, entries: [SyncPlanEntry])] {
         let calendar = Calendar.current
-        let now = Date()
-        let today = calendar.startOfDay(for: now)
+        let today = calendar.startOfDay(for: Date())
 
-        var groups: [EventTimeGroup: [CachedEvent]] = [:]
+        var groups: [EventTimeGroup: [SyncPlanEntry]] = [:]
 
-        for event in cachedEvents {
-            let group = EventTimeGroup.classify(date: event.startDate, today: today, calendar: calendar)
-            groups[group, default: []].append(event)
+        for entry in displayEntries {
+            // Orphaned events without valid dates go into a special section
+            if entry.status == .orphaned && entry.startDate == .distantPast {
+                groups[.earlier, default: []].append(entry)
+                continue
+            }
+            let group = EventTimeGroup.classify(date: entry.startDate, today: today, calendar: calendar)
+            groups[group, default: []].append(entry)
         }
 
         return EventTimeGroup.allCases.compactMap { group in
-            guard let events = groups[group], !events.isEmpty else { return nil }
-            return (group: group, events: events)
+            guard let entries = groups[group], !entries.isEmpty else { return nil }
+            return (group: group, entries: entries)
         }
     }
 
     private var initialScrollTarget: EventTimeGroup? {
-        let groups = groupedEvents.map(\.group)
+        let groups = groupedEntries.map(\.group)
         if groups.contains(.today) { return .today }
-        // No "Today" section — pick the nearest section after today's position
         if let after = groups.first(where: { $0.rawValue > EventTimeGroup.today.rawValue }) {
             return after
         }
@@ -40,24 +47,57 @@ struct EventsOverviewView: View {
     var body: some View {
         ScrollViewReader { proxy in
             List {
-                if cachedEvents.isEmpty {
+                if isAnalyzing && syncPlan == nil {
+                    Section {
+                        HStack {
+                            Spacer()
+                            ProgressView("Analyzing…")
+                            Spacer()
+                        }
+                    }
+                } else if displayEntries.isEmpty {
                     ContentUnavailableView(
                         "No Events",
                         systemImage: "calendar.badge.exclamationmark",
                         description: Text("Synced events will appear here.")
                     )
                 } else {
-                    ForEach(groupedEvents, id: \.group) { section in
+                    if let plan = syncPlan {
+                        statusSummary(plan)
+                    }
+                    ForEach(groupedEntries, id: \.group) { section in
                         Section(section.group.title) {
-                            ForEach(section.events, id: \.eventIdentifier) { event in
-                                EventRow(event: event, prefix: configMap[event.calendarIdentifier]?.effectivePrefix)
+                            ForEach(section.entries) { entry in
+                                EventRow(entry: entry)
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                        if entry.status == .orphaned, let uid = entry.remoteUID {
+                                            Button(role: .destructive) {
+                                                deleteConfirmation = entry
+                                            } label: {
+                                                Label("Delete", systemImage: "trash")
+                                            }
+                                        }
+                                    }
                             }
                         }
                         .id(section.group)
                     }
                 }
             }
+            .task {
+                await analyze()
+            }
+            .refreshable {
+                await analyze()
+            }
             .onAppear {
+                if syncPlan != nil, let target = initialScrollTarget {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        proxy.scrollTo(target, anchor: .top)
+                    }
+                }
+            }
+            .onChange(of: syncPlan != nil) {
                 if let target = initialScrollTarget {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                         proxy.scrollTo(target, anchor: .top)
@@ -65,50 +105,152 @@ struct EventsOverviewView: View {
                 }
             }
         }
-        .navigationTitle("Synced Events")
+        .navigationTitle("Events")
+        .alert("Delete from Server?", isPresented: .init(
+            get: { deleteConfirmation != nil },
+            set: { if !$0 { deleteConfirmation = nil } }
+        )) {
+            Button("Cancel", role: .cancel) { deleteConfirmation = nil }
+            Button("Delete", role: .destructive) {
+                if let entry = deleteConfirmation, let uid = entry.remoteUID {
+                    Task { await deleteOrphan(uid: uid) }
+                }
+            }
+        } message: {
+            Text("This will permanently remove \"\(deleteConfirmation?.title ?? "")\" from the server.")
+        }
+    }
+
+    @ViewBuilder
+    private func statusSummary(_ plan: SyncPlan) -> some View {
+        Section {
+            HStack(spacing: 12) {
+                StatusBadge(count: plan.syncedCount, icon: "checkmark.icloud", color: .green)
+                StatusBadge(count: plan.pendingCount, icon: "icloud.and.arrow.up", color: .blue)
+                StatusBadge(count: plan.modifiedCount, icon: "arrow.triangle.2.circlepath.icloud", color: .orange)
+                StatusBadge(count: plan.pendingDeleteCount, icon: "icloud.and.arrow.down", color: .orange)
+                StatusBadge(count: plan.orphanedCount, icon: "exclamationmark.icloud", color: .red)
+            }
+            .font(.caption)
+
+            if !plan.errors.isEmpty {
+                ForEach(plan.errors, id: \.self) { error in
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func analyze() async {
+        isAnalyzing = true
+        syncPlan = await syncScheduler.syncEngine.analyzeSyncPlan(modelContext: modelContext)
+        isAnalyzing = false
+    }
+
+    private func deleteOrphan(uid: String) async {
+        do {
+            // Load server config to create a client
+            let descriptor = FetchDescriptor<ServerConfiguration>(
+                predicate: #Predicate { $0.isActive }
+            )
+            guard let serverConfig = try? modelContext.fetch(descriptor).first,
+                  let password = KeychainHelper.load(service: serverConfig.keychainServiceID, account: serverConfig.username) else {
+                return
+            }
+            let client = try CalDAVClient(
+                serverURL: serverConfig.serverURL,
+                calendarPath: serverConfig.calendarPath,
+                username: serverConfig.username,
+                password: password
+            )
+            try await client.deleteEvent(uid: uid)
+            // Re-analyze to refresh the view
+            await analyze()
+        } catch {
+            // Error is logged by CalDAVClient
+        }
+    }
+}
+
+// MARK: - Status Badge
+
+private struct StatusBadge: View {
+    let count: Int
+    let icon: String
+    let color: Color
+
+    var body: some View {
+        if count > 0 {
+            HStack(spacing: 2) {
+                Image(systemName: icon)
+                    .foregroundStyle(color)
+                Text("\(count)")
+            }
+        }
     }
 }
 
 // MARK: - Event Row
 
 private struct EventRow: View {
-    let event: CachedEvent
-    let prefix: String?
+    let entry: SyncPlanEntry
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(displayTitle)
-                .font(.body)
-                .lineLimit(2)
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(displayTitle)
+                    .font(.body)
+                    .lineLimit(2)
 
-            Text(dateDescription)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                if entry.startDate != .distantPast {
+                    Text(dateDescription)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.vertical, 2)
+
+            Spacer()
+
+            Image(systemName: entry.status.iconName)
+                .foregroundStyle(statusColor)
+                .font(.body)
         }
-        .padding(.vertical, 2)
+    }
+
+    private var statusColor: Color {
+        switch entry.status {
+        case .synced: .green
+        case .modified: .orange
+        case .pending: .blue
+        case .pendingDelete: .orange
+        case .orphaned: .red
+        }
     }
 
     private var displayTitle: String {
-        if let prefix, !prefix.isEmpty {
-            return "[\(prefix)] \(event.title)"
+        if let prefix = entry.prefix, !prefix.isEmpty {
+            return "[\(prefix)] \(entry.title)"
         }
-        return event.title
+        return entry.title
     }
 
     private var dateDescription: String {
-        if event.isAllDay {
-            if Calendar.current.isDate(event.startDate, inSameDayAs: event.endDate) ||
-               event.endDate.timeIntervalSince(event.startDate) <= 86400 {
-                return Self.dayFormatter.string(from: event.startDate)
+        if entry.isAllDay {
+            if Calendar.current.isDate(entry.startDate, inSameDayAs: entry.endDate) ||
+               entry.endDate.timeIntervalSince(entry.startDate) <= 86400 {
+                return Self.dayFormatter.string(from: entry.startDate)
             } else {
-                let adjustedEnd = Calendar.current.date(byAdding: .day, value: -1, to: event.endDate) ?? event.endDate
-                return "\(Self.dayFormatter.string(from: event.startDate)) – \(Self.dayFormatter.string(from: adjustedEnd))"
+                let adjustedEnd = Calendar.current.date(byAdding: .day, value: -1, to: entry.endDate) ?? entry.endDate
+                return "\(Self.dayFormatter.string(from: entry.startDate)) – \(Self.dayFormatter.string(from: adjustedEnd))"
             }
         } else {
-            if Calendar.current.isDate(event.startDate, inSameDayAs: event.endDate) {
-                return "\(Self.dayFormatter.string(from: event.startDate)), \(Self.timeFormatter.string(from: event.startDate)) – \(Self.timeFormatter.string(from: event.endDate))"
+            if Calendar.current.isDate(entry.startDate, inSameDayAs: entry.endDate) {
+                return "\(Self.dayFormatter.string(from: entry.startDate)), \(Self.timeFormatter.string(from: entry.startDate)) – \(Self.timeFormatter.string(from: entry.endDate))"
             } else {
-                return "\(Self.dateTimeFormatter.string(from: event.startDate)) – \(Self.dateTimeFormatter.string(from: event.endDate))"
+                return "\(Self.dateTimeFormatter.string(from: entry.startDate)) – \(Self.dateTimeFormatter.string(from: entry.endDate))"
             }
         }
     }
@@ -249,5 +391,10 @@ enum EventTimeGroup: Int, CaseIterable {
     .modelContainer(for: [
         CachedEvent.self,
         CalendarSyncConfig.self,
+        ServerConfiguration.self,
     ], inMemory: true)
+    .environment(SyncScheduler(
+        eventStore: ReadOnlyEventStore(),
+        syncEngine: SyncEngine(eventStore: ReadOnlyEventStore())
+    ))
 }
