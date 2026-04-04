@@ -69,11 +69,15 @@ struct ContentView: View {
 
     private var statusSection: some View {
         Section {
-            HStack {
-                Label("Synced Events", systemImage: "calendar")
-                Spacer()
-                Text("\(cachedEvents.count)")
-                    .foregroundStyle(.secondary)
+            NavigationLink {
+                EventsOverviewView()
+            } label: {
+                HStack {
+                    Label("Synced Events", systemImage: "calendar")
+                    Spacer()
+                    Text("\(cachedEvents.count)")
+                        .foregroundStyle(.secondary)
+                }
             }
 
             NavigationLink {
