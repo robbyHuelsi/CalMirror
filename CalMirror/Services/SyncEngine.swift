@@ -227,6 +227,15 @@ final class SyncEngine {
             } else {
                 let remoteUID = UUID().uuidString
                 let ics = ICSGenerator.generateICS(from: event, uid: remoteUID, prefix: prefix)
+                let newEventHash = CachedEvent.computeHash(
+                    title: event.title ?? "",
+                    startDate: event.startDate,
+                    endDate: event.endDate,
+                    location: event.location,
+                    notes: event.notes,
+                    isAllDay: event.isAllDay,
+                    recurrenceRuleDescription: event.recurrenceRules?.first?.description
+                )
                 pendingPuts.append(PendingPut(
                     eventIdentifier: event.eventIdentifier,
                     calendarIdentifier: event.calendar.calendarIdentifier,
@@ -237,7 +246,7 @@ final class SyncEngine {
                     notes: event.notes,
                     isAllDay: event.isAllDay,
                     recurrenceRuleDescription: event.recurrenceRules?.first?.description,
-                    contentHash: nil,
+                    contentHash: newEventHash,
                     remoteUID: remoteUID,
                     icsData: ics,
                     isNew: true
@@ -301,6 +310,15 @@ final class SyncEngine {
                         recurrenceRuleDescription: putResult.recurrenceRuleDescription,
                         remoteUID: putResult.remoteUID
                     )
+                    cached.contentHash = putResult.contentHash ?? CachedEvent.computeHash(
+                        title: putResult.title,
+                        startDate: putResult.startDate,
+                        endDate: putResult.endDate,
+                        location: putResult.location,
+                        notes: putResult.notes,
+                        isAllDay: putResult.isAllDay,
+                        recurrenceRuleDescription: putResult.recurrenceRuleDescription
+                    )
                     modelContext.insert(cached)
                     result.created += 1
                 } else if let cached = cachedByIdentifier[putResult.eventIdentifier] {
@@ -362,7 +380,7 @@ final class SyncEngine {
 
         for put in puts {
             do {
-                try await client.putEvent(icsData: put.icsData, uid: put.remoteUID)
+                try await client.putEvent(icsData: put.icsData, uid: put.remoteUID, isNew: put.isNew)
                 result.putResults.append(PutResult(
                     eventIdentifier: put.eventIdentifier,
                     calendarIdentifier: put.calendarIdentifier,

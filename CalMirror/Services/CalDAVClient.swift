@@ -61,13 +61,15 @@ actor CalDAVClient {
     }
 
     /// Creates or updates an event on the CalDAV server.
-    func putEvent(icsData: String, uid: String) async throws {
+    func putEvent(icsData: String, uid: String, isNew: Bool = true) async throws {
         let url = eventURL(for: uid)
-        logger.info("PUT \(url.absoluteString)")
+        logger.info("PUT \(url.absoluteString) (isNew=\(isNew))")
         var request = URLRequest(url: url)
         request.httpMethod = "PUT"
         request.setValue("text/calendar; charset=utf-8", forHTTPHeaderField: "Content-Type")
-        request.setValue("*", forHTTPHeaderField: "If-None-Match")
+        if isNew {
+            request.setValue("*", forHTTPHeaderField: "If-None-Match")
+        }
         addAuthHeader(to: &request)
         request.httpBody = Data(icsData.utf8)
         logger.debug("PUT body (\(icsData.count) chars): \(String(icsData.prefix(200)))")
