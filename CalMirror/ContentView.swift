@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
@@ -12,6 +13,10 @@ struct ContentView: View {
 
     @State private var syncHistory: [SyncResult] = []
     @State private var isSyncing = false
+    @State private var showExporter = false
+    @State private var showImporter = false
+    @State private var settingsDocument: SettingsDocument?
+    @State private var importMessage: String?
 
     var body: some View {
         NavigationStack {
@@ -21,6 +26,30 @@ struct ContentView: View {
                 settingsSection
             }
             .navigationTitle("CalMirror")
+            .fileExporter(
+                isPresented: $showExporter,
+                document: settingsDocument,
+                contentType: .json,
+                defaultFilename: "CalMirror-Settings.json"
+            ) { result in
+                if case .failure(let error) = result {
+                    importMessage = "Export failed: \(error.localizedDescription)"
+                }
+            }
+            .fileImporter(
+                isPresented: $showImporter,
+                allowedContentTypes: [.json, .data]
+            ) { result in
+                importSettings(result: result)
+            }
+            .alert("Settings", isPresented: .init(
+                get: { importMessage != nil },
+                set: { if !$0 { importMessage = nil } }
+            )) {
+                Button("OK") { importMessage = nil }
+            } message: {
+                Text(importMessage ?? "")
+            }
             .onReceive(NotificationCenter.default.publisher(for: .calendarDidChange)) { _ in
                 Task { await autoSync() }
             }
@@ -132,6 +161,18 @@ struct ContentView: View {
             } label: {
                 Label("Sync Log", systemImage: "list.bullet.clipboard")
             }
+
+            Button {
+                exportSettings()
+            } label: {
+                Label("Export Settings", systemImage: "square.and.arrow.up")
+            }
+
+            Button {
+                showImporter = true
+            } label: {
+                Label("Import Settings", systemImage: "square.and.arrow.down")
+            }
         }
     }
 
@@ -150,6 +191,41 @@ struct ContentView: View {
     private func autoSync() async {
         guard !isSyncing else { return }
         await manualSync()
+    }
+
+    // MARK: - Export/Import
+
+    private func exportSettings() {
+        do {
+            let export = try SettingsExport.from(modelContext: modelContext)
+            settingsDocument = try SettingsDocument(export: export)
+            showExporter = true
+        } catch {
+            importMessage = "Export failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func importSettings(result: Result<URL, Error>) {
+        switch result {
+        case .success(let url):
+            guard url.startAccessingSecurityScopedResource() else {
+                importMessage = "Could not access file."
+                return
+            }
+            defer { url.stopAccessingSecurityScopedResource() }
+            do {
+                let data = try Data(contentsOf: url)
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                let export = try decoder.decode(SettingsExport.self, from: data)
+                try export.apply(to: modelContext)
+                importMessage = "Settings imported successfully. Please enter your password in Server Configuration."
+            } catch {
+                importMessage = "Import failed: \(error.localizedDescription)"
+            }
+        case .failure(let error):
+            importMessage = "Import failed: \(error.localizedDescription)"
+        }
     }
 }
 
