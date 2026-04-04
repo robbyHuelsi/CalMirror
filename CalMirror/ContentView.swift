@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import UniformTypeIdentifiers
+import Combine
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
@@ -22,7 +23,6 @@ struct ContentView: View {
         NavigationStack {
             List {
                 statusSection
-                syncSection
                 settingsSection
             }
             .navigationTitle("CalMirror")
@@ -97,53 +97,22 @@ struct ContentView: View {
                 }
             }
 
-            if let lastSync = syncScheduler.lastSyncDate {
-                HStack {
-                    Label("Last Sync", systemImage: "clock")
-                    Spacer()
-                    Text(lastSync, style: .relative)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            if let lastResult = syncScheduler.syncEngine.lastSyncResult {
-                HStack {
-                    Label("Last Result", systemImage: lastResult.errors.isEmpty ? "checkmark.circle" : "exclamationmark.triangle")
-                    Spacer()
-                    Text(lastResult.summary)
-                        .font(.caption)
-                        .foregroundStyle(lastResult.errors.isEmpty ? .secondary : Color.orange)
-                }
-            }
-        }
-    }
-
-    // MARK: - Sync Section
-
-    private var syncSection: some View {
-        Section {
-            Button {
-                Task { await manualSync() }
+            NavigationLink {
+                SyncDetailView(syncHistory: $syncHistory, isSyncing: $isSyncing)
             } label: {
                 HStack {
-                    Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
+                    Label("Synchronization", systemImage: "arrow.triangle.2.circlepath")
                     Spacer()
-                    if isSyncing {
-                        ProgressView()
-                            .controlSize(.small)
+                    if let lastSync = syncScheduler.lastSyncDate {
+                        TimelineView(.periodic(from: .now, by: 15)) { context in
+                            Text(coarseRelativeTime(from: lastSync, now: context.date))
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text("Never")
+                            .foregroundStyle(.secondary)
                     }
                 }
-            }
-            .disabled(isSyncing || serverConfigs.isEmpty || enabledCalendars.isEmpty)
-
-            if serverConfigs.isEmpty {
-                Label("Configure a server first", systemImage: "info.circle")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else if enabledCalendars.isEmpty {
-                Label("Select calendars to sync", systemImage: "info.circle")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -172,9 +141,23 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Sync Actions
+    // MARK: - Auto Sync
 
-    private func manualSync() async {
+    private func coarseRelativeTime(from date: Date, now: Date = Date()) -> String {
+        let seconds = Int(now.timeIntervalSince(date))
+        if seconds < 60 {
+            return "< 1 min ago"
+        } else if seconds < 3600 {
+            return "\(seconds / 60) min ago"
+        } else if seconds < 86400 {
+            return "\(seconds / 3600) hr ago"
+        } else {
+            return "\(seconds / 86400) days ago"
+        }
+    }
+
+    private func autoSync() async {
+        guard !isSyncing else { return }
         isSyncing = true
         let result = await syncScheduler.triggerSync(modelContext: modelContext)
         syncHistory.insert(result, at: 0)
@@ -182,11 +165,6 @@ struct ContentView: View {
             syncHistory = Array(syncHistory.prefix(50))
         }
         isSyncing = false
-    }
-
-    private func autoSync() async {
-        guard !isSyncing else { return }
-        await manualSync()
     }
 
     // MARK: - Export/Import
