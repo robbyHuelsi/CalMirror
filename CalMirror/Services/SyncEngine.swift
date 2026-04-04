@@ -1,6 +1,9 @@
 import EventKit
 import Foundation
+import os.log
 import SwiftData
+
+private let logger = Logger(subsystem: "de.huelsi.CalMirror", category: "Sync")
 
 /// Result of a sync operation.
 struct SyncResult: Sendable {
@@ -40,9 +43,11 @@ final class SyncEngine {
     /// Performs a full sync: reads events from EventKit, compares with cache, and pushes changes to CalDAV.
     func performSync(modelContext: ModelContext) async -> SyncResult {
         guard !isSyncing else {
+            logger.warning("Sync skipped — already in progress")
             return SyncResult(errors: ["Sync already in progress"])
         }
 
+        logger.info("========== SYNC STARTED ==========")
         isSyncing = true
 
         var result = SyncResult()
@@ -62,21 +67,25 @@ final class SyncEngine {
         }
 
         guard let serverConfig = serverConfigs.first else {
+            logger.error("No active server configuration found")
             result.errors.append("No active server configuration found")
             lastSyncResult = result
             isSyncing = false
             return result
         }
+        logger.info("Server: \(serverConfig.serverURL), path: \(serverConfig.calendarPath), user: \(serverConfig.username)")
 
         guard let password = KeychainHelper.load(
             service: serverConfig.keychainServiceID,
             account: serverConfig.username
         ) else {
+            logger.error("No password in Keychain for service=\(serverConfig.keychainServiceID), account=\(serverConfig.username)")
             result.errors.append("No password found in Keychain")
             lastSyncResult = result
             isSyncing = false
             return result
         }
+        logger.info("Password loaded from Keychain (length=\(password.count))")
 
         // 2. Load enabled calendars
         let calendarConfigs: [CalendarSyncConfig]
@@ -93,11 +102,13 @@ final class SyncEngine {
         }
 
         guard !calendarConfigs.isEmpty else {
+            logger.error("No calendars selected for sync")
             result.errors.append("No calendars selected for sync")
             lastSyncResult = result
             isSyncing = false
             return result
         }
+        logger.info("Enabled calendars: \(calendarConfigs.count)")
 
         // 3. Resolve EKCalendar objects
         let selectedCalendars = calendarConfigs.compactMap { config in
@@ -105,11 +116,13 @@ final class SyncEngine {
         }
 
         guard !selectedCalendars.isEmpty else {
+            logger.error("Selected calendars no longer available (IDs: \(calendarConfigs.map { $0.calendarIdentifier }))")
             result.errors.append("Selected calendars no longer available")
             lastSyncResult = result
             isSyncing = false
             return result
         }
+        logger.info("Resolved \(selectedCalendars.count) EKCalendars: \(selectedCalendars.map { $0.title })")
 
         // 4. Build config lookup
         var configMap: [String: CalendarSyncConfig] = [:]
@@ -131,8 +144,10 @@ final class SyncEngine {
             let endDate = cal.date(byAdding: future.component, value: future.value, to: now) ?? now
 
             let events = eventStore.fetchEvents(from: startDate, to: endDate, calendars: [ekCalendar])
+            logger.info("Calendar '\(ekCalendar.title)': \(events.count) events (\(startDate) → \(endDate))")
             currentEvents.append(contentsOf: events)
         }
+        logger.info("Total events from EventKit: \(currentEvents.count)")
 
         // 6. Load cached events from SwiftData
         let cachedEvents: [CachedEvent]
@@ -146,6 +161,8 @@ final class SyncEngine {
             return result
         }
 
+        logger.info("Cached events in DB: \(cachedEvents.count)")
+
         // 7. Create CalDAV client
         let client: CalDAVClient
         do {
@@ -156,6 +173,7 @@ final class SyncEngine {
                 password: password
             )
         } catch {
+            logger.error("CalDAV client init failed: \(error.localizedDescription)")
             result.errors.append("CalDAV client error: \(error.localizedDescription)")
             lastSyncResult = result
             isSyncing = false
@@ -251,6 +269,14 @@ final class SyncEngine {
             }
         }
 
+        logger.info("Pending operations: \(pendingPuts.count) PUTs, \(pendingDeletes.count) DELETEs")
+        for put in pendingPuts {
+            logger.debug("  PUT: '\(put.title)' uid=\(put.remoteUID) new=\(put.isNew)")
+        }
+        for del in pendingDeletes {
+            logger.debug("  DELETE: '\(del.title)' uid=\(del.remoteUID)")
+        }
+
         // 10. Execute all network I/O off the main actor
         let networkResult = await Self.executeNetworkOperations(
             client: client,
@@ -312,6 +338,13 @@ final class SyncEngine {
             try modelContext.save()
         } catch {
             result.errors.append("Failed to save cache: \(error.localizedDescription)")
+        }
+
+        logger.info("========== SYNC FINISHED: \(result.summary) ==========")
+        if !result.errors.isEmpty {
+            for err in result.errors {
+                logger.error("  Sync error: \(err)")
+            }
         }
 
         lastSyncResult = result

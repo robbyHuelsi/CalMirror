@@ -1,4 +1,7 @@
 import Foundation
+import os.log
+
+private let logger = Logger(subsystem: "de.huelsi.CalMirror", category: "CalDAV")
 
 /// Errors that can occur during CalDAV operations.
 enum CalDAVError: LocalizedError {
@@ -37,9 +40,11 @@ actor CalDAVClient {
 
     init(serverURL: String, calendarPath: String, username: String, password: String) throws {
         guard let url = URL(string: serverURL) else {
+            logger.error("Invalid server URL: \(serverURL)")
             throw CalDAVError.invalidURL
         }
         guard !username.isEmpty, !password.isEmpty else {
+            logger.error("Missing credentials (user=\(username), pw empty=\(password.isEmpty))")
             throw CalDAVError.missingCredentials
         }
 
@@ -47,6 +52,7 @@ actor CalDAVClient {
         self.calendarPath = calendarPath
         self.username = username
         self.password = password
+        logger.info("CalDAVClient init: baseURL=\(url.absoluteString), path=\(calendarPath), user=\(username)")
 
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
@@ -57,21 +63,28 @@ actor CalDAVClient {
     /// Creates or updates an event on the CalDAV server.
     func putEvent(icsData: String, uid: String) async throws {
         let url = eventURL(for: uid)
+        logger.info("PUT \(url.absoluteString)")
         var request = URLRequest(url: url)
         request.httpMethod = "PUT"
         request.setValue("text/calendar; charset=utf-8", forHTTPHeaderField: "Content-Type")
         request.setValue("*", forHTTPHeaderField: "If-None-Match")
         addAuthHeader(to: &request)
         request.httpBody = Data(icsData.utf8)
+        logger.debug("PUT body (\(icsData.count) chars): \(String(icsData.prefix(200)))")
 
-        let (_, response) = try await performRequest(request)
+        let (data, response) = try await performRequest(request)
 
         guard let httpResponse = response as? HTTPURLResponse else {
+            logger.error("PUT \(uid): invalid response (not HTTP)")
             throw CalDAVError.invalidResponse
         }
 
+        logger.info("PUT \(uid): HTTP \(httpResponse.statusCode)")
+
         // 201 Created or 204 No Content are both success
         guard (200...299).contains(httpResponse.statusCode) else {
+            let body = String(data: data, encoding: .utf8) ?? "<binary>"
+            logger.error("PUT \(uid) failed: HTTP \(httpResponse.statusCode) — \(body)")
             if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
                 throw CalDAVError.authenticationFailed
             }
@@ -85,18 +98,24 @@ actor CalDAVClient {
     /// Deletes an event from the CalDAV server.
     func deleteEvent(uid: String) async throws {
         let url = eventURL(for: uid)
+        logger.info("DELETE \(url.absoluteString)")
         var request = URLRequest(url: url)
         request.httpMethod = "DELETE"
         addAuthHeader(to: &request)
 
-        let (_, response) = try await performRequest(request)
+        let (data, response) = try await performRequest(request)
 
         guard let httpResponse = response as? HTTPURLResponse else {
+            logger.error("DELETE \(uid): invalid response (not HTTP)")
             throw CalDAVError.invalidResponse
         }
 
+        logger.info("DELETE \(uid): HTTP \(httpResponse.statusCode)")
+
         // 204 No Content or 200 OK are success; 404 means already gone (also OK)
         guard (200...299).contains(httpResponse.statusCode) || httpResponse.statusCode == 404 else {
+            let body = String(data: data, encoding: .utf8) ?? "<binary>"
+            logger.error("DELETE \(uid) failed: HTTP \(httpResponse.statusCode) — \(body)")
             if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
                 throw CalDAVError.authenticationFailed
             }
@@ -114,6 +133,7 @@ actor CalDAVClient {
         if let combined = URL(string: url.absoluteString + path) {
             url = combined
         }
+        logger.info("PROPFIND (testConnection) \(url.absoluteString)")
 
         var request = URLRequest(url: url)
         request.httpMethod = "PROPFIND"
@@ -138,12 +158,17 @@ actor CalDAVClient {
             throw CalDAVError.invalidResponse
         }
 
+        logger.info("PROPFIND testConnection: HTTP \(httpResponse.statusCode)")
+
         if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
+            logger.error("PROPFIND testConnection: auth failed (\(httpResponse.statusCode))")
             throw CalDAVError.authenticationFailed
         }
 
         // 207 Multi-Status is the expected CalDAV response
-        return (200...299).contains(httpResponse.statusCode) || httpResponse.statusCode == 207
+        let success = (200...299).contains(httpResponse.statusCode) || httpResponse.statusCode == 207
+        logger.info("PROPFIND testConnection: success=\(success)")
+        return success
     }
 
     // MARK: - Private Helpers
@@ -151,7 +176,9 @@ actor CalDAVClient {
     private func eventURL(for uid: String) -> URL {
         let path = calendarPath.hasPrefix("/") ? calendarPath : "/\(calendarPath)"
         let fullPath = path.hasSuffix("/") ? "\(path)\(uid).ics" : "\(path)/\(uid).ics"
-        return URL(string: baseURL.absoluteString + fullPath)!
+        let url = URL(string: baseURL.absoluteString + fullPath)!
+        logger.debug("eventURL: \(url.absoluteString)")
+        return url
     }
 
     private func addAuthHeader(to request: inout URLRequest) {
@@ -164,8 +191,10 @@ actor CalDAVClient {
 
     private func performRequest(_ request: URLRequest) async throws -> (Data, URLResponse) {
         do {
-            return try await session.data(for: request)
+            let (data, response) = try await session.data(for: request)
+            return (data, response)
         } catch {
+            logger.error("Network error: \(error.localizedDescription)")
             throw CalDAVError.networkError(error)
         }
     }
