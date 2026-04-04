@@ -28,6 +28,9 @@ struct ContentView: View {
                     settingsSection
                 }
             }
+            .refreshable {
+                await autoSync()
+            }
             .navigationTitle("CalMirror")
             .fileExporter(
                 isPresented: $showExporter,
