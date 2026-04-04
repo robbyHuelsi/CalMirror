@@ -62,7 +62,7 @@ struct ContentView: View {
     // MARK: - Status Section
 
     private var statusSection: some View {
-        Section("Status") {
+        Section {
             HStack {
                 Label("Synced Events", systemImage: "calendar")
                 Spacer()
@@ -70,22 +70,30 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
             }
 
-            HStack {
-                Label("Active Calendars", systemImage: "checklist")
-                Spacer()
-                Text("\(enabledCalendars.count)")
-                    .foregroundStyle(.secondary)
+            NavigationLink {
+                CalendarSelectionView(eventStore: eventStore)
+            } label: {
+                HStack {
+                    Label("Active Calendars", systemImage: "checklist")
+                    Spacer()
+                    Text("\(enabledCalendars.count)")
+                        .foregroundStyle(.secondary)
+                }
             }
 
-            HStack {
-                Label("Server", systemImage: "server.rack")
-                Spacer()
-                if let server = serverConfigs.first {
-                    Text(server.serverURL)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("Not configured")
-                        .foregroundStyle(.red)
+            NavigationLink {
+                ServerSettingsView()
+            } label: {
+                HStack {
+                    Label("Server", systemImage: "server.rack")
+                    Spacer()
+                    if let server = serverConfigs.first {
+                        Text(server.serverURL)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Not configured")
+                            .foregroundStyle(.red)
+                    }
                 }
             }
 
@@ -113,7 +121,7 @@ struct ContentView: View {
     // MARK: - Sync Section
 
     private var syncSection: some View {
-        Section("Sync") {
+        Section {
             Button {
                 Task { await manualSync() }
             } label: {
@@ -143,19 +151,7 @@ struct ContentView: View {
     // MARK: - Settings Section
 
     private var settingsSection: some View {
-        Section("Settings") {
-            NavigationLink {
-                ServerSettingsView()
-            } label: {
-                Label("Server Configuration", systemImage: "server.rack")
-            }
-
-            NavigationLink {
-                CalendarSelectionView(eventStore: eventStore)
-            } label: {
-                Label("Calendars", systemImage: "calendar")
-            }
-
+        Section("Developer Tools") {
             NavigationLink {
                 SyncLogView(syncResults: syncHistory)
             } label: {
