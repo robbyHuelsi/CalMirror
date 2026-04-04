@@ -71,15 +71,13 @@ enum SchemaV1: VersionedSchema {
         var calendarPath: String
         var syncIntervalMinutes: Int
         var isActive: Bool
-        var displayName: String
 
         init(
             serverURL: String = "",
             username: String = "",
             calendarPath: String = "/calendars/",
             syncIntervalMinutes: Int = 30,
-            isActive: Bool = true,
-            displayName: String = "CalDAV Server"
+            isActive: Bool = true
         ) {
             self.id = UUID().uuidString
             self.serverURL = serverURL
@@ -87,7 +85,6 @@ enum SchemaV1: VersionedSchema {
             self.calendarPath = calendarPath
             self.syncIntervalMinutes = syncIntervalMinutes
             self.isActive = isActive
-            self.displayName = displayName
         }
     }
 

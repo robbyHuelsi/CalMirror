@@ -10,7 +10,6 @@ struct ServerSettingsView: View {
     @State private var password = ""
     @State private var calendarPath = "/calendars/"
     @State private var syncInterval = 30
-    @State private var displayName = "CalDAV Server"
 
     @State private var isTesting = false
     @State private var testResult: TestResult?
@@ -32,7 +31,6 @@ struct ServerSettingsView: View {
                 #endif
                     .autocorrectionDisabled()
 
-                TextField("Display Name", text: $displayName)
             }
 
             Section("Authentication") {
@@ -91,15 +89,14 @@ struct ServerSettingsView: View {
                 }
             }
 
-            Section {
-                Button("Save") {
-                    saveConfiguration()
-                }
-                .disabled(serverURL.isEmpty || username.isEmpty)
-            }
         }
         .navigationTitle("Server Settings")
         .onAppear(perform: loadExisting)
+        .onChange(of: serverURL) { saveConfiguration() }
+        .onChange(of: username) { saveConfiguration() }
+        .onChange(of: password) { saveConfiguration() }
+        .onChange(of: calendarPath) { saveConfiguration() }
+        .onChange(of: syncInterval) { saveConfiguration() }
     }
 
     private func loadExisting() {
@@ -108,7 +105,6 @@ struct ServerSettingsView: View {
         username = existing.username
         calendarPath = existing.calendarPath
         syncInterval = existing.syncIntervalMinutes
-        displayName = existing.displayName
         if let pw = KeychainHelper.load(
             service: existing.keychainServiceID,
             account: existing.username
@@ -137,7 +133,6 @@ struct ServerSettingsView: View {
         config.username = username
         config.calendarPath = calendarPath
         config.syncIntervalMinutes = syncInterval
-        config.displayName = displayName
         config.isActive = true
 
         if !password.isEmpty {

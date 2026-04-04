@@ -17,7 +17,6 @@ struct SettingsExport: Codable {
         var username: String
         var calendarPath: String
         var syncIntervalMinutes: Int
-        var displayName: String
         var isActive: Bool
     }
 
@@ -43,7 +42,6 @@ struct SettingsExport: Codable {
                 username: config.username,
                 calendarPath: config.calendarPath,
                 syncIntervalMinutes: config.syncIntervalMinutes,
-                displayName: config.displayName,
                 isActive: config.isActive
             )
         }
@@ -82,8 +80,7 @@ struct SettingsExport: Codable {
                 username: server.username,
                 calendarPath: server.calendarPath,
                 syncIntervalMinutes: server.syncIntervalMinutes,
-                isActive: server.isActive,
-                displayName: server.displayName
+                isActive: server.isActive
             )
             modelContext.insert(config)
         }

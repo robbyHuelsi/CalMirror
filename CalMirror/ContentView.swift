@@ -81,7 +81,7 @@ struct ContentView: View {
                 Label("Server", systemImage: "server.rack")
                 Spacer()
                 if let server = serverConfigs.first {
-                    Text(server.displayName)
+                    Text(server.serverURL)
                         .foregroundStyle(.secondary)
                 } else {
                     Text("Not configured")
