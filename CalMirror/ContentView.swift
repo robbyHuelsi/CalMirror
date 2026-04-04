@@ -18,12 +18,15 @@ struct ContentView: View {
     @State private var showImporter = false
     @State private var settingsDocument: SettingsDocument?
     @State private var importMessage: String?
+    @AppStorage("showDeveloperTools") private var showDeveloperTools = false
 
     var body: some View {
         NavigationStack {
             List {
                 statusSection
-                settingsSection
+                if showDeveloperTools {
+                    settingsSection
+                }
             }
             .navigationTitle("CalMirror")
             .fileExporter(
