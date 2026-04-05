@@ -31,7 +31,8 @@ struct EventsOverviewView: View {
 
         return EventTimeGroup.allCases.compactMap { group in
             guard let entries = groups[group], !entries.isEmpty else { return nil }
-            return (group: group, entries: entries)
+            let sorted = entries.sorted { $0.startDate < $1.startDate }
+            return (group: group, entries: sorted)
         }
     }
 
@@ -280,37 +281,37 @@ private struct EventRow: View {
 // MARK: - Time Group Classification
 
 enum EventTimeGroup: Int, CaseIterable {
+    case earlier
+    case lastYear
+    case lastMonth
+    case lastWeek
     case yesterday
     case today
     case tomorrow
-    case lastWeek
     case thisWeek
     case nextWeek
-    case lastMonth
     case thisMonth
     case nextMonth
-    case lastYear
     case thisYear
     case nextYear
     case furtherAhead
-    case earlier
 
     var title: String {
         switch self {
+        case .earlier: "Earlier"
+        case .lastYear: "Last Year"
+        case .lastMonth: "Last Month"
+        case .lastWeek: "Last Week"
         case .yesterday: "Yesterday"
         case .today: "Today"
         case .tomorrow: "Tomorrow"
-        case .lastWeek: "Last Week"
         case .thisWeek: "This Week"
         case .nextWeek: "Next Week"
-        case .lastMonth: "Last Month"
         case .thisMonth: "This Month"
         case .nextMonth: "Next Month"
-        case .lastYear: "Last Year"
         case .thisYear: "This Year"
         case .nextYear: "Next Year"
         case .furtherAhead: "Further Ahead"
-        case .earlier: "Earlier"
         }
     }
 
