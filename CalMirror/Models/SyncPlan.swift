@@ -32,6 +32,16 @@ enum EventSyncStatus: Sendable {
         case .orphaned: "red"
         }
     }
+
+    var displayName: String {
+        switch self {
+        case .synced: "Synced"
+        case .modified: "Modified"
+        case .pending: "Pending"
+        case .pendingDelete: "Delete"
+        case .orphaned: "Orphaned"
+        }
+    }
 }
 
 /// A unified representation of an event in the sync plan, regardless of its source.

@@ -8,9 +8,12 @@ struct EventsOverviewView: View {
     @State private var syncPlan: SyncPlan?
     @State private var isAnalyzing = false
     @State private var deleteConfirmation: SyncPlanEntry?
+    @State private var activeFilter: EventSyncStatus?
 
     private var displayEntries: [SyncPlanEntry] {
-        syncPlan?.entries ?? []
+        let all = syncPlan?.entries ?? []
+        guard let filter = activeFilter else { return all }
+        return all.filter { $0.status == filter }
     }
 
     private var groupedEntries: [(group: EventTimeGroup, entries: [SyncPlanEntry])] {
@@ -56,15 +59,28 @@ struct EventsOverviewView: View {
                             Spacer()
                         }
                     }
-                } else if displayEntries.isEmpty {
+                } else if (syncPlan?.entries ?? []).isEmpty {
                     ContentUnavailableView(
                         "No Events",
                         systemImage: "calendar.badge.exclamationmark",
                         description: Text("Synced events will appear here.")
                     )
                 } else {
-                    if let plan = syncPlan {
-                        statusSummary(plan)
+                    if let plan = syncPlan, !plan.errors.isEmpty {
+                        Section {
+                            ForEach(plan.errors, id: \.self) { error in
+                                Label(error, systemImage: "exclamationmark.triangle")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    if displayEntries.isEmpty {
+                        ContentUnavailableView(
+                            "No \(activeFilter?.displayName ?? "") Events",
+                            systemImage: "line.3.horizontal.decrease.circle",
+                            description: Text("No events match the selected filter.")
+                        )
                     }
                     ForEach(groupedEntries, id: \.group) { section in
                         Section(section.group.title) {
@@ -105,6 +121,11 @@ struct EventsOverviewView: View {
                     }
                 }
             }
+            .safeAreaInset(edge: .bottom) {
+                if let plan = syncPlan, !(syncPlan?.entries ?? []).isEmpty {
+                    statusBar(plan)
+                }
+            }
         }
         .navigationTitle("Events")
         .alert("Delete from Server?", isPresented: .init(
@@ -123,25 +144,29 @@ struct EventsOverviewView: View {
     }
 
     @ViewBuilder
-    private func statusSummary(_ plan: SyncPlan) -> some View {
-        Section {
-            HStack(spacing: 12) {
-                StatusBadge(count: plan.syncedCount, icon: "checkmark.icloud", color: .green)
-                StatusBadge(count: plan.pendingCount, icon: "icloud.and.arrow.up", color: .blue)
-                StatusBadge(count: plan.modifiedCount, icon: "arrow.triangle.2.circlepath.icloud", color: .orange)
-                StatusBadge(count: plan.pendingDeleteCount, icon: "icloud.and.arrow.down", color: .orange)
-                StatusBadge(count: plan.orphanedCount, icon: "exclamationmark.icloud", color: .red)
-            }
-            .font(.caption)
-
-            if !plan.errors.isEmpty {
-                ForEach(plan.errors, id: \.self) { error in
-                    Label(error, systemImage: "exclamationmark.triangle")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+    private func statusBar(_ plan: SyncPlan) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                StatusBadge(status: .synced, count: plan.syncedCount, activeFilter: activeFilter) {
+                    withAnimation { activeFilter = activeFilter == .synced ? nil : .synced }
+                }
+                StatusBadge(status: .pending, count: plan.pendingCount, activeFilter: activeFilter) {
+                    withAnimation { activeFilter = activeFilter == .pending ? nil : .pending }
+                }
+                StatusBadge(status: .modified, count: plan.modifiedCount, activeFilter: activeFilter) {
+                    withAnimation { activeFilter = activeFilter == .modified ? nil : .modified }
+                }
+                StatusBadge(status: .pendingDelete, count: plan.pendingDeleteCount, activeFilter: activeFilter) {
+                    withAnimation { activeFilter = activeFilter == .pendingDelete ? nil : .pendingDelete }
+                }
+                StatusBadge(status: .orphaned, count: plan.orphanedCount, activeFilter: activeFilter) {
+                    withAnimation { activeFilter = activeFilter == .orphaned ? nil : .orphaned }
                 }
             }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
         }
+        .glassEffect(.regular.interactive())
     }
 
     private func analyze() async {
@@ -178,18 +203,45 @@ struct EventsOverviewView: View {
 // MARK: - Status Badge
 
 private struct StatusBadge: View {
+    let status: EventSyncStatus
     let count: Int
-    let icon: String
-    let color: Color
+    let activeFilter: EventSyncStatus?
+    let onTap: () -> Void
+
+    private var color: Color {
+        switch status {
+        case .synced: .green
+        case .modified: .orange
+        case .pending: .blue
+        case .pendingDelete: .orange
+        case .orphaned: .red
+        }
+    }
+
+    private var isActive: Bool { activeFilter == status }
+    private var isFiltered: Bool { activeFilter != nil && !isActive }
 
     var body: some View {
-        if count > 0 {
-            HStack(spacing: 2) {
-                Image(systemName: icon)
+        VStack(spacing: 2) {
+            HStack(spacing: 3) {
+                Image(systemName: status.iconName)
                     .foregroundStyle(color)
                 Text("\(count)")
+                    .fontWeight(isActive ? .bold : .regular)
             }
+            .font(.caption)
+            Text(status.displayName)
+                .font(.caption2)
         }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            Capsule()
+                .fill(isActive ? color.opacity(0.2) : Color.clear)
+        )
+        .opacity(isFiltered ? 0.4 : 1.0)
+        .contentShape(Capsule())
+        .onTapGesture(perform: onTap)
     }
 }
 
