@@ -10,6 +10,8 @@ struct WelcomeWizardView: View {
     @State private var hasCalendarAccess = false
     @State private var isCalendarDenied = false
     @State private var isRequestingAccess = false
+    @State private var privacyAcknowledged = false
+    @State private var highlightPrivacyButton = false
 
     private let totalSteps = 6
 
@@ -33,6 +35,15 @@ struct WelcomeWizardView: View {
             .tabViewStyle(.page(indexDisplayMode: .never))
             #endif
             .animation(.easeInOut(duration: 0.3), value: currentStep)
+            .onChange(of: currentStep) { oldValue, newValue in
+                if oldValue == 1 && newValue > 1 && !privacyAcknowledged {
+                    currentStep = 1
+                    highlightPrivacyButton = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        highlightPrivacyButton = false
+                    }
+                }
+            }
         }
     }
 
@@ -72,8 +83,10 @@ struct WelcomeWizardView: View {
             iconColor: .orange,
             title: "Your Privacy Matters",
             description: "Calendar events often contain private information — meeting details, locations, attendees, and personal notes.\n\nBy using CalMirror, you choose to forward this data to a third-party CalDAV server that you configure. Please make sure you trust the server you connect to.\n\nCalMirror never sends data anywhere else.",
-            buttonTitle: "I Understand"
+            buttonTitle: "I Understand",
+            highlightButton: $highlightPrivacyButton
         ) {
+            privacyAcknowledged = true
             withAnimation { currentStep = 2 }
         }
     }
@@ -291,7 +304,12 @@ private struct WizardInfoPage: View {
     let title: String
     let description: String
     let buttonTitle: String
+    var highlightButton: Binding<Bool>?
     let action: () -> Void
+
+    private var isHighlighted: Bool {
+        highlightButton?.wrappedValue ?? false
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -324,6 +342,8 @@ private struct WizardInfoPage: View {
                     .padding(.vertical, 14)
             }
             .buttonStyle(.borderedProminent)
+            .scaleEffect(isHighlighted ? 1.15 : 1.0)
+            .animation(.spring(response: 0.3, dampingFraction: 0.4), value: isHighlighted)
             .padding(.horizontal, 32)
             .padding(.bottom, 48)
         }
