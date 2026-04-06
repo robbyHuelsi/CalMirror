@@ -52,6 +52,14 @@ struct WelcomeWizardView: View {
                 }
             }
         }
+        .background {
+            LinearGradient(
+                colors: [.blue.opacity(0.12), .purple.opacity(0.08), .cyan.opacity(0.1)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+        }
     }
 
     // MARK: - Progress Indicator
@@ -138,7 +146,9 @@ struct WelcomeWizardView: View {
                             #endif
                         }
                     }
-                    .padding(.horizontal, 32)
+                    .padding(24)
+                    .glassEffect(in: .rect(cornerRadius: 20))
+                    .padding(.horizontal, 16)
 
                     Spacer()
 
@@ -272,7 +282,9 @@ struct WelcomeWizardView: View {
                             .multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    .padding(.horizontal, 32)
+                    .padding(24)
+                    .glassEffect(in: .rect(cornerRadius: 20))
+                    .padding(.horizontal, 16)
 
                     Spacer()
 
@@ -355,7 +367,9 @@ private struct WizardInfoPage: View {
                                 .multilineTextAlignment(.center)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
-                        .padding(.horizontal, 32)
+                        .padding(24)
+                        .glassEffect(in: .rect(cornerRadius: 20))
+                        .padding(.horizontal, 16)
 
                         Spacer()
 

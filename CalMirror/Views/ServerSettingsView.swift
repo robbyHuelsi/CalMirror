@@ -120,6 +120,7 @@ struct ServerSettingsView: View {
 
         }
         .navigationTitle("Server Settings")
+        .scrollContentBackground(headerView != nil ? .hidden : .automatic)
         .onAppear(perform: loadExisting)
         .onChange(of: serverURL) { saveConfiguration() }
         .onChange(of: username) { saveConfiguration() }

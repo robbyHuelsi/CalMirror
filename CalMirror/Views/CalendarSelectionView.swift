@@ -190,6 +190,7 @@ struct CalendarSelectionView: View {
             }
         }
         .navigationTitle("Calendars")
+        .scrollContentBackground(headerView != nil ? .hidden : .automatic)
         .task {
             await checkAccess()
         }
