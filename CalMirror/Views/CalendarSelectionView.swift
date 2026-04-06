@@ -107,6 +107,8 @@ struct CalendarSelectionView: View {
     @Query private var syncConfigs: [CalendarSyncConfig]
 
     let eventStore: EventReading
+    private let headerView: AnyView?
+    private let footerView: AnyView?
 
     @State private var calendars: [CalendarInfo] = []
     @State private var hasAccess = false
@@ -117,10 +119,28 @@ struct CalendarSelectionView: View {
         self.eventStore = eventStore
         _calendars = State(initialValue: initialCalendars ?? [])
         _hasAccess = State(initialValue: initialCalendars != nil)
+        self.headerView = nil
+        self.footerView = nil
+    }
+
+    init<H: View, F: View>(eventStore: EventReading, initialCalendars: [CalendarInfo]? = nil, @ViewBuilder header: () -> H, @ViewBuilder footer: () -> F) {
+        self.eventStore = eventStore
+        _calendars = State(initialValue: initialCalendars ?? [])
+        _hasAccess = State(initialValue: initialCalendars != nil)
+        self.headerView = AnyView(header())
+        self.footerView = AnyView(footer())
     }
 
     var body: some View {
         List {
+            if let headerView {
+                Section {
+                    headerView
+                }
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            }
+
             if !hasAccess {
                 accessSection
             } else if calendars.isEmpty {
@@ -159,6 +179,14 @@ struct CalendarSelectionView: View {
                         }
                     }
                 }
+            }
+
+            if let footerView {
+                Section {
+                    footerView
+                }
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
             }
         }
         .navigationTitle("Calendars")

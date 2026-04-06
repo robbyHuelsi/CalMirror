@@ -187,61 +187,65 @@ struct WelcomeWizardView: View {
     // MARK: - Page 4: Calendar Selection
 
     private var calendarSelectionPage: some View {
-        VStack(spacing: 0) {
-            VStack(spacing: 4) {
-                Text("Choose Your Calendars")
-                    .font(.title2.weight(.bold))
-                Text("Select which calendars to sync")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+        CalendarSelectionView(
+            eventStore: eventStore,
+            initialCalendars: initialCalendars,
+            header: {
+                VStack(spacing: 4) {
+                    Text("Choose Your Calendars")
+                        .font(.title2.weight(.bold))
+                    Text("Select which calendars to sync")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 16)
+                .padding(.bottom, 8)
+            },
+            footer: {
+                Button {
+                    withAnimation { currentStep = 4 }
+                } label: {
+                    Text("Continue")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                }
+                .buttonStyle(.borderedProminent)
+                .padding(.bottom, 48)
             }
-            .padding(.top, 16)
-            .padding(.bottom, 8)
-
-            CalendarSelectionView(eventStore: eventStore, initialCalendars: initialCalendars)
-
-            Button {
-                withAnimation { currentStep = 4 }
-            } label: {
-                Text("Continue")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-            }
-            .buttonStyle(.borderedProminent)
-            .padding(.horizontal, 32)
-            .padding(.bottom, 48)
-        }
+        )
     }
 
     // MARK: - Page 5: Server Settings
 
     private var serverSettingsPage: some View {
-        VStack(spacing: 0) {
-            VStack(spacing: 4) {
-                Text("Connect Your Server")
-                    .font(.title2.weight(.bold))
-                Text("Configure your CalDAV destination")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+        ServerSettingsView(
+            header: {
+                VStack(spacing: 4) {
+                    Text("Connect Your Server")
+                        .font(.title2.weight(.bold))
+                    Text("Configure your CalDAV destination")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 16)
+                .padding(.bottom, 8)
+            },
+            footer: {
+                Button {
+                    withAnimation { currentStep = 5 }
+                } label: {
+                    Text("Continue")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                }
+                .buttonStyle(.borderedProminent)
+                .padding(.bottom, 48)
             }
-            .padding(.top, 16)
-            .padding(.bottom, 8)
-
-            ServerSettingsView()
-
-            Button {
-                withAnimation { currentStep = 5 }
-            } label: {
-                Text("Continue")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-            }
-            .buttonStyle(.borderedProminent)
-            .padding(.horizontal, 32)
-            .padding(.bottom, 48)
-        }
+        )
     }
 
     // MARK: - Page 6: Completion

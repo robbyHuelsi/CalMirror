@@ -21,9 +21,29 @@ struct ServerSettingsView: View {
     }
 
     private let syncIntervalOptions = [15, 30, 60, 120]
+    private let headerView: AnyView?
+    private let footerView: AnyView?
+
+    init() {
+        self.headerView = nil
+        self.footerView = nil
+    }
+
+    init<H: View, F: View>(@ViewBuilder header: () -> H, @ViewBuilder footer: () -> F) {
+        self.headerView = AnyView(header())
+        self.footerView = AnyView(footer())
+    }
 
     var body: some View {
         Form {
+            if let headerView {
+                Section {
+                    headerView
+                }
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            }
+
             Section("Server") {
                 TextField("Server URL", text: $serverURL)
                 #if os(iOS)
@@ -88,6 +108,14 @@ struct ServerSettingsView: View {
                             .foregroundStyle(.red)
                     }
                 }
+            }
+
+            if let footerView {
+                Section {
+                    footerView
+                }
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
             }
 
         }
