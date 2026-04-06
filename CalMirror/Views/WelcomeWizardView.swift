@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import EventKit
 
 struct WelcomeWizardView: View {
@@ -328,3 +329,40 @@ private struct WizardInfoPage: View {
         }
     }
 }
+
+// MARK: - Previews
+
+#if DEBUG
+#Preview("Onboarding") {
+    WelcomeWizardView(
+        hasCompletedOnboarding: .constant(false),
+        eventStore: MockEventStore(authorizationStatus: .notDetermined)
+    )
+    .modelContainer(previewModelContainer())
+}
+
+#Preview("Access Granted") {
+    WelcomeWizardView(
+        hasCompletedOnboarding: .constant(false),
+        eventStore: MockEventStore()
+    )
+    .modelContainer(previewModelContainer())
+}
+
+#Preview("Access Denied") {
+    WelcomeWizardView(
+        hasCompletedOnboarding: .constant(false),
+        eventStore: MockEventStore(authorizationStatus: .denied)
+    )
+    .modelContainer(previewModelContainer())
+}
+
+#Preview("Dark Mode") {
+    WelcomeWizardView(
+        hasCompletedOnboarding: .constant(false),
+        eventStore: MockEventStore(authorizationStatus: .notDetermined)
+    )
+    .modelContainer(previewModelContainer())
+    .preferredColorScheme(.dark)
+}
+#endif

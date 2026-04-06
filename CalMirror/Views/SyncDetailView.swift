@@ -79,3 +79,61 @@ struct SyncDetailView: View {
         isSyncing = false
     }
 }
+
+// MARK: - Previews
+
+#if DEBUG
+#Preview("Idle") {
+    NavigationStack {
+        SyncDetailView(
+            syncHistory: .constant([]),
+            isSyncing: .constant(false)
+        )
+    }
+    .modelContainer(previewModelContainer(populate: true))
+    .environment(previewSyncScheduler())
+}
+
+#Preview("After Sync") {
+    NavigationStack {
+        SyncDetailView(
+            syncHistory: .constant(PreviewData.syncResults),
+            isSyncing: .constant(false)
+        )
+    }
+    .modelContainer(previewModelContainer(populate: true))
+    .environment(previewSyncScheduler(
+        lastSyncDate: Date().addingTimeInterval(-120),
+        lastSyncResult: PreviewData.syncResults.first
+    ))
+}
+
+#Preview("Syncing") {
+    NavigationStack {
+        SyncDetailView(
+            syncHistory: .constant(PreviewData.syncResults),
+            isSyncing: .constant(true)
+        )
+    }
+    .modelContainer(previewModelContainer(populate: true))
+    .environment(previewSyncScheduler(
+        lastSyncDate: Date().addingTimeInterval(-120),
+        lastSyncResult: PreviewData.syncResults.first
+    ))
+}
+
+#Preview("Dark Mode") {
+    NavigationStack {
+        SyncDetailView(
+            syncHistory: .constant(PreviewData.syncResults),
+            isSyncing: .constant(false)
+        )
+    }
+    .modelContainer(previewModelContainer(populate: true))
+    .environment(previewSyncScheduler(
+        lastSyncDate: Date().addingTimeInterval(-120),
+        lastSyncResult: PreviewData.syncResults.first
+    ))
+    .preferredColorScheme(.dark)
+}
+#endif

@@ -75,3 +75,26 @@ private struct SyncLogRow: View {
         .padding(.vertical, 4)
     }
 }
+
+// MARK: - Previews
+
+#if DEBUG
+#Preview("With Results") {
+    NavigationStack {
+        SyncLogView(syncResults: PreviewData.syncResults)
+    }
+}
+
+#Preview("Empty") {
+    NavigationStack {
+        SyncLogView(syncResults: [])
+    }
+}
+
+#Preview("Dark Mode") {
+    NavigationStack {
+        SyncLogView(syncResults: PreviewData.syncResults)
+    }
+    .preferredColorScheme(.dark)
+}
+#endif

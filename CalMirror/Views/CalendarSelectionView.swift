@@ -77,6 +77,30 @@ private enum TimeRangeSteps {
     }
 }
 
+/// Lightweight value type that captures the EKCalendar properties used by this view,
+/// so previews can supply mock calendars without needing real EventKit instances.
+struct CalendarInfo: Identifiable {
+    var id: String { calendarIdentifier }
+    let calendarIdentifier: String
+    let title: String
+    let cgColor: CGColor
+    let sourceTitle: String
+
+    init(from calendar: EKCalendar) {
+        self.calendarIdentifier = calendar.calendarIdentifier
+        self.title = calendar.title
+        self.cgColor = calendar.cgColor
+        self.sourceTitle = calendar.source?.title ?? "Other"
+    }
+
+    init(calendarIdentifier: String, title: String, cgColor: CGColor, sourceTitle: String = "Other") {
+        self.calendarIdentifier = calendarIdentifier
+        self.title = title
+        self.cgColor = cgColor
+        self.sourceTitle = sourceTitle
+    }
+}
+
 struct CalendarSelectionView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
@@ -84,10 +108,16 @@ struct CalendarSelectionView: View {
 
     let eventStore: EventReading
 
-    @State private var calendars: [EKCalendar] = []
+    @State private var calendars: [CalendarInfo] = []
     @State private var hasAccess = false
     @State private var isDenied = false
     @State private var isRequestingAccess = false
+
+    init(eventStore: EventReading, initialCalendars: [CalendarInfo]? = nil) {
+        self.eventStore = eventStore
+        _calendars = State(initialValue: initialCalendars ?? [])
+        _hasAccess = State(initialValue: initialCalendars != nil)
+    }
 
     var body: some View {
         List {
@@ -185,21 +215,23 @@ struct CalendarSelectionView: View {
 
     // MARK: - Helpers
 
-    private var calendarsBySource: [(key: String, value: [EKCalendar])] {
-        let grouped = Dictionary(grouping: calendars) { $0.source?.title ?? "Other" }
+    private var calendarsBySource: [(key: String, value: [CalendarInfo])] {
+        let grouped = Dictionary(grouping: calendars) { $0.sourceTitle }
         return grouped.sorted { $0.key < $1.key }
     }
 
-    private func configFor(_ calendar: EKCalendar) -> CalendarSyncConfig? {
+    private func configFor(_ calendar: CalendarInfo) -> CalendarSyncConfig? {
         syncConfigs.first { $0.calendarIdentifier == calendar.calendarIdentifier }
     }
 
     private func checkAccess() async {
+        // Skip if calendars were injected (e.g. preview)
+        guard calendars.isEmpty else { return }
         let status = eventStore.authorizationStatus()
         hasAccess = status == .fullAccess
         isDenied = status == .denied || status == .restricted
         if hasAccess {
-            calendars = eventStore.availableCalendars()
+            calendars = eventStore.availableCalendars().map { CalendarInfo(from: $0) }
         }
     }
 
@@ -210,7 +242,7 @@ struct CalendarSelectionView: View {
         do {
             hasAccess = try await eventStore.requestAccess()
             if hasAccess {
-                calendars = eventStore.availableCalendars()
+                calendars = eventStore.availableCalendars().map { CalendarInfo(from: $0) }
             } else {
                 isDenied = true
             }
@@ -220,39 +252,39 @@ struct CalendarSelectionView: View {
         }
     }
 
-    private func toggleSync(calendar: EKCalendar, enabled: Bool) {
+    private func toggleSync(calendar: CalendarInfo, enabled: Bool) {
         let config = getOrCreateConfig(for: calendar)
         config.isEnabled = enabled
         try? modelContext.save()
     }
 
-    private func togglePrefix(calendar: EKCalendar, enabled: Bool) {
+    private func togglePrefix(calendar: CalendarInfo, enabled: Bool) {
         let config = getOrCreateConfig(for: calendar)
         config.isPrefixEnabled = enabled
         try? modelContext.save()
     }
 
-    private func updatePrefix(calendar: EKCalendar, prefix: String) {
+    private func updatePrefix(calendar: CalendarInfo, prefix: String) {
         let config = getOrCreateConfig(for: calendar)
         config.customPrefix = prefix.isEmpty ? nil : prefix
         try? modelContext.save()
     }
 
-    private func updatePast(calendar: EKCalendar, step: TimeRangeStep) {
+    private func updatePast(calendar: CalendarInfo, step: TimeRangeStep) {
         let config = getOrCreateConfig(for: calendar)
         config.pastValue = step.value
         config.pastUnit = step.unit
         try? modelContext.save()
     }
 
-    private func updateFuture(calendar: EKCalendar, step: TimeRangeStep) {
+    private func updateFuture(calendar: CalendarInfo, step: TimeRangeStep) {
         let config = getOrCreateConfig(for: calendar)
         config.futureValue = step.value
         config.futureUnit = step.unit
         try? modelContext.save()
     }
 
-    private func getOrCreateConfig(for calendar: EKCalendar) -> CalendarSyncConfig {
+    private func getOrCreateConfig(for calendar: CalendarInfo) -> CalendarSyncConfig {
         if let existing = syncConfigs.first(where: { $0.calendarIdentifier == calendar.calendarIdentifier }) {
             return existing
         }
@@ -268,7 +300,7 @@ struct CalendarSelectionView: View {
 // MARK: - Calendar Row
 
 private struct CalendarRow: View {
-    let calendar: EKCalendar
+    let calendar: CalendarInfo
     let config: CalendarSyncConfig?
     let onToggleSync: (Bool) -> Void
     let onTogglePrefix: (Bool) -> Void
@@ -276,6 +308,7 @@ private struct CalendarRow: View {
     let onPastChanged: (TimeRangeStep) -> Void
     let onFutureChanged: (TimeRangeStep) -> Void
 
+    @State private var isLoading = true
     @State private var isEnabled: Bool = false
     @State private var isPrefixEnabled: Bool = false
     @State private var prefixText: String = ""
@@ -293,6 +326,7 @@ private struct CalendarRow: View {
                 }
             }
             .onChange(of: isEnabled) { _, newValue in
+                guard !isLoading else { return }
                 onToggleSync(newValue)
             }
 
@@ -302,6 +336,7 @@ private struct CalendarRow: View {
                     .padding(.leading, 20)
                     .padding(.top, 8)
                     .onChange(of: isPrefixEnabled) { _, newValue in
+                        guard !isLoading else { return }
                         onTogglePrefix(newValue)
                         if newValue && prefixText.isEmpty {
                             prefixText = calendar.title
@@ -314,6 +349,7 @@ private struct CalendarRow: View {
                         .textFieldStyle(.roundedBorder)
                         .padding(.leading, 20)
                         .onChange(of: prefixText) { _, newValue in
+                            guard !isLoading else { return }
                             onPrefixChanged(newValue)
                         }
 
@@ -373,6 +409,7 @@ private struct CalendarRow: View {
                 forValue: config?.futureValue ?? 1,
                 unit: config?.futureUnit ?? "year"
             )
+            DispatchQueue.main.async { isLoading = false }
         }
     }
 
@@ -424,3 +461,35 @@ private struct CalendarRow: View {
         .padding(.leading, 20)
     }
 }
+
+// MARK: - Previews
+
+#if DEBUG
+#Preview("Access Granted") {
+    NavigationStack {
+        CalendarSelectionView(
+            eventStore: MockEventStore(),
+            initialCalendars: PreviewData.calendars
+        )
+    }
+    .modelContainer(previewModelContainer(populate: true))
+}
+
+#Preview("No Access") {
+    NavigationStack {
+        CalendarSelectionView(eventStore: MockEventStore(authorizationStatus: .denied))
+    }
+    .modelContainer(previewModelContainer())
+}
+
+#Preview("Dark Mode") {
+    NavigationStack {
+        CalendarSelectionView(
+            eventStore: MockEventStore(),
+            initialCalendars: PreviewData.calendars
+        )
+    }
+    .modelContainer(previewModelContainer(populate: true))
+    .preferredColorScheme(.dark)
+}
+#endif

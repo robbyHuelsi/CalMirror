@@ -10,6 +10,10 @@ struct EventsOverviewView: View {
     @State private var deleteConfirmation: SyncPlanEntry?
     @State private var activeFilter: EventSyncStatus?
 
+    init(initialSyncPlan: SyncPlan? = nil) {
+        _syncPlan = State(initialValue: initialSyncPlan)
+    }
+
     private var displayEntries: [SyncPlanEntry] {
         let all = syncPlan?.entries ?? []
         guard let filter = activeFilter else { return all }
@@ -102,7 +106,7 @@ struct EventsOverviewView: View {
                 }
             }
             .task {
-                await analyze()
+                if syncPlan == nil { await analyze() }
             }
             .refreshable {
                 await analyze()
@@ -437,17 +441,29 @@ enum EventTimeGroup: Int, CaseIterable {
     }
 }
 
-#Preview {
+#if DEBUG
+#Preview("With Events") {
+    NavigationStack {
+        EventsOverviewView(initialSyncPlan: PreviewData.samplePlan)
+    }
+    .modelContainer(previewModelContainer(populate: true))
+    .environment(previewSyncScheduler())
+}
+
+#Preview("Empty") {
     NavigationStack {
         EventsOverviewView()
     }
-    .modelContainer(for: [
-        CachedEvent.self,
-        CalendarSyncConfig.self,
-        ServerConfiguration.self,
-    ], inMemory: true)
-    .environment(SyncScheduler(
-        eventStore: ReadOnlyEventStore(),
-        syncEngine: SyncEngine(eventStore: ReadOnlyEventStore())
-    ))
+    .modelContainer(previewModelContainer())
+    .environment(previewSyncScheduler())
 }
+
+#Preview("Dark Mode") {
+    NavigationStack {
+        EventsOverviewView(initialSyncPlan: PreviewData.samplePlan)
+    }
+    .modelContainer(previewModelContainer(populate: true))
+    .environment(previewSyncScheduler())
+    .preferredColorScheme(.dark)
+}
+#endif

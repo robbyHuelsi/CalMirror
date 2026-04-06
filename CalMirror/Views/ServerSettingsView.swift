@@ -13,6 +13,7 @@ struct ServerSettingsView: View {
 
     @State private var isTesting = false
     @State private var testResult: TestResult?
+    @State private var isLoading = true
 
     private enum TestResult {
         case success
@@ -100,7 +101,10 @@ struct ServerSettingsView: View {
     }
 
     private func loadExisting() {
-        guard let existing = serverConfigs.first else { return }
+        guard let existing = serverConfigs.first else {
+            DispatchQueue.main.async { isLoading = false }
+            return
+        }
         serverURL = existing.serverURL
         username = existing.username
         calendarPath = existing.calendarPath
@@ -111,9 +115,13 @@ struct ServerSettingsView: View {
         ) {
             password = pw
         }
+        // Defer to next run loop iteration so isLoading is still true
+        // when SwiftUI fires the batched onChange handlers above
+        DispatchQueue.main.async { isLoading = false }
     }
 
     private func saveConfiguration() {
+        guard !isLoading else { return }
         let config: ServerConfiguration
         if let existing = serverConfigs.first {
             config = existing
@@ -165,3 +173,29 @@ struct ServerSettingsView: View {
         }
     }
 }
+
+// MARK: - Previews
+
+#if DEBUG
+#Preview("Empty") {
+    NavigationStack {
+        ServerSettingsView()
+    }
+    .modelContainer(previewModelContainer())
+}
+
+#Preview("Configured") {
+    NavigationStack {
+        ServerSettingsView()
+    }
+    .modelContainer(previewModelContainer(populate: true))
+}
+
+#Preview("Dark Mode") {
+    NavigationStack {
+        ServerSettingsView()
+    }
+    .modelContainer(previewModelContainer(populate: true))
+    .preferredColorScheme(.dark)
+}
+#endif

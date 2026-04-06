@@ -213,15 +213,23 @@ struct ContentView: View {
     }
 }
 
-#Preview {
-    ContentView(eventStore: ReadOnlyEventStore())
-        .modelContainer(for: [
-            CachedEvent.self,
-            ServerConfiguration.self,
-            CalendarSyncConfig.self,
-        ], inMemory: true)
-        .environment(SyncScheduler(
-            eventStore: ReadOnlyEventStore(),
-            syncEngine: SyncEngine(eventStore: ReadOnlyEventStore())
-        ))
+#if DEBUG
+#Preview("Fresh Install") {
+    ContentView(eventStore: MockEventStore())
+        .modelContainer(previewModelContainer())
+        .environment(previewSyncScheduler())
 }
+
+#Preview("Configured") {
+    ContentView(eventStore: MockEventStore())
+        .modelContainer(previewModelContainer(populate: true))
+        .environment(previewSyncScheduler())
+}
+
+#Preview("Dark Mode") {
+    ContentView(eventStore: MockEventStore())
+        .modelContainer(previewModelContainer(populate: true))
+        .environment(previewSyncScheduler())
+        .preferredColorScheme(.dark)
+}
+#endif
