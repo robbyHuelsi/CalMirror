@@ -101,78 +101,83 @@ struct WelcomeWizardView: View {
     // MARK: - Page 3: Calendar Access
 
     private var calendarAccessPage: some View {
-        VStack(spacing: 0) {
-            Spacer()
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(spacing: 0) {
+                    Spacer()
 
-            VStack(spacing: 24) {
-                Image(systemName: "calendar")
-                    .font(.system(size: 72, weight: .light))
-                    .foregroundStyle(.green.gradient)
-                    .symbolRenderingMode(.multicolor)
-                    .padding(.bottom, 8)
+                    VStack(spacing: 24) {
+                        Image(systemName: "calendar")
+                            .font(.system(size: 72, weight: .light))
+                            .foregroundStyle(.green.gradient)
+                            .symbolRenderingMode(.multicolor)
+                            .padding(.bottom, 8)
 
-                Text("Calendar Access")
-                    .font(.largeTitle.weight(.bold))
+                        Text("Calendar Access")
+                            .font(.largeTitle.weight(.bold))
 
-                Text("iOS requires **Full Access** permission to read your calendar events. This may sound like a lot, but it's the only way for apps to read event details.\n\nCalMirror **never** creates, modifies, or deletes any of your calendar events. The app is designed to be strictly read-only.")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
+                        Text("iOS requires **Full Access** permission to read your calendar events. This may sound like a lot, but it's the only way for apps to read event details.\n\nCalMirror **never** creates, modifies, or deletes any of your calendar events. The app is designed to be strictly read-only.")
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
 
-                if isCalendarDenied {
-                    Label("Calendar access was denied. Please enable it in Settings.", systemImage: "exclamationmark.triangle.fill")
-                        .font(.callout)
-                        .foregroundStyle(.orange)
-                        .multilineTextAlignment(.center)
+                        if isCalendarDenied {
+                            Label("Calendar access was denied. Please enable it in Settings.", systemImage: "exclamationmark.triangle.fill")
+                                .font(.callout)
+                                .foregroundStyle(.orange)
+                                .multilineTextAlignment(.center)
 
-                    #if os(iOS) || os(visionOS)
-                    Button("Open Settings") {
-                        if let url = URL(string: UIApplication.openSettingsURLString) {
-                            UIApplication.shared.open(url)
+                            #if os(iOS) || os(visionOS)
+                            Button("Open Settings") {
+                                if let url = URL(string: UIApplication.openSettingsURLString) {
+                                    UIApplication.shared.open(url)
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            #endif
                         }
                     }
-                    .buttonStyle(.bordered)
-                    #endif
-                }
-            }
-            .padding(.horizontal, 32)
+                    .padding(.horizontal, 32)
 
-            Spacer()
+                    Spacer()
 
-            VStack(spacing: 12) {
-                if hasCalendarAccess {
-                    Label("Access Granted", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                        .font(.headline)
-                        .transition(.opacity.combined(with: .scale))
-                }
+                    VStack(spacing: 12) {
+                        if hasCalendarAccess {
+                            Label("Access Granted", systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                                .font(.headline)
+                                .transition(.opacity.combined(with: .scale))
+                        }
 
-                Button {
-                    if hasCalendarAccess {
-                        withAnimation { currentStep = 3 }
-                    } else {
-                        Task { await requestCalendarAccess() }
+                        Button {
+                            if hasCalendarAccess {
+                                withAnimation { currentStep = 3 }
+                            } else {
+                                Task { await requestCalendarAccess() }
+                            }
+                        } label: {
+                            Text(hasCalendarAccess ? "Continue" : "Grant Access")
+                                .font(.headline)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 14)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(isRequestingAccess)
+
+                        if !hasCalendarAccess && !isCalendarDenied {
+                            Button("Skip for Now") {
+                                withAnimation { currentStep = 3 }
+                            }
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        }
                     }
-                } label: {
-                    Text(hasCalendarAccess ? "Continue" : "Grant Access")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
+                    .padding(.horizontal, 32)
+                    .padding(.bottom, 48)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(isRequestingAccess)
-
-                if !hasCalendarAccess && !isCalendarDenied {
-                    Button("Skip for Now") {
-                        withAnimation { currentStep = 3 }
-                    }
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                }
+                .frame(minHeight: geometry.size.height)
             }
-            .padding(.horizontal, 32)
-            .padding(.bottom, 48)
         }
         .task {
             await checkCalendarAccess()
@@ -242,40 +247,45 @@ struct WelcomeWizardView: View {
     // MARK: - Page 6: Completion
 
     private var completionPage: some View {
-        VStack(spacing: 0) {
-            Spacer()
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(spacing: 0) {
+                    Spacer()
 
-            VStack(spacing: 24) {
-                Image(systemName: "checkmark.circle")
-                    .font(.system(size: 72, weight: .light))
-                    .foregroundStyle(.green.gradient)
-                    .symbolRenderingMode(.multicolor)
-                    .padding(.bottom, 8)
+                    VStack(spacing: 24) {
+                        Image(systemName: "checkmark.circle")
+                            .font(.system(size: 72, weight: .light))
+                            .foregroundStyle(.green.gradient)
+                            .symbolRenderingMode(.multicolor)
+                            .padding(.bottom, 8)
 
-                Text("You're All Set!")
-                    .font(.largeTitle.weight(.bold))
+                        Text("You're All Set!")
+                            .font(.largeTitle.weight(.bold))
 
-                Text("Everything is configured. CalMirror will now keep your calendar synced to your server.\n\nYou can adjust all settings at any time from the main screen.")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
+                        Text("Everything is configured. CalMirror will now keep your calendar synced to your server.\n\nYou can adjust all settings at any time from the main screen.")
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.horizontal, 32)
+
+                    Spacer()
+
+                    Button {
+                        hasCompletedOnboarding = true
+                    } label: {
+                        Text("Start Using CalMirror")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .padding(.horizontal, 32)
+                    .padding(.bottom, 48)
+                }
+                .frame(minHeight: geometry.size.height)
             }
-            .padding(.horizontal, 32)
-
-            Spacer()
-
-            Button {
-                hasCompletedOnboarding = true
-            } label: {
-                Text("Start Using CalMirror")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-            }
-            .buttonStyle(.borderedProminent)
-            .padding(.horizontal, 32)
-            .padding(.bottom, 48)
         }
     }
 
@@ -319,40 +329,55 @@ private struct WizardInfoPage: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            Spacer()
+        GeometryReader { geometry in
+            ScrollViewReader { scrollProxy in
+                ScrollView {
+                    VStack(spacing: 0) {
+                        Spacer()
 
-            VStack(spacing: 24) {
-                Image(systemName: icon)
-                    .font(.system(size: 72, weight: .light))
-                    .foregroundStyle(iconColor.gradient)
-                    .symbolRenderingMode(.multicolor)
-                    .padding(.bottom, 8)
+                        VStack(spacing: 24) {
+                            Image(systemName: icon)
+                                .font(.system(size: 72, weight: .light))
+                                .foregroundStyle(iconColor.gradient)
+                                .symbolRenderingMode(.multicolor)
+                                .padding(.bottom, 8)
 
-                Text(title)
-                    .font(.largeTitle.weight(.bold))
+                            Text(title)
+                                .font(.largeTitle.weight(.bold))
 
-                Text(description)
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
+                            Text(description)
+                                .font(.body)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.horizontal, 32)
+
+                        Spacer()
+
+                        Button(action: action) {
+                            Text(buttonTitle)
+                                .font(.headline)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 14)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .scaleEffect(isHighlighted ? 1.15 : 1.0)
+                        .animation(.spring(response: 0.3, dampingFraction: 0.4), value: isHighlighted)
+                        .padding(.horizontal, 32)
+                        .padding(.bottom, 48)
+                        .id("actionButton")
+                    }
+                    .frame(minHeight: geometry.size.height)
+                }
+                .onChange(of: isHighlighted) { _, highlighted in
+                    if highlighted {
+                        withAnimation {
+                            scrollProxy.scrollTo("actionButton", anchor: .bottom)
+                        }
+                    }
+                }
             }
-            .padding(.horizontal, 32)
-
-            Spacer()
-
-            Button(action: action) {
-                Text(buttonTitle)
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-            }
-            .buttonStyle(.borderedProminent)
-            .scaleEffect(isHighlighted ? 1.15 : 1.0)
-            .animation(.spring(response: 0.3, dampingFraction: 0.4), value: isHighlighted)
-            .padding(.horizontal, 32)
-            .padding(.bottom, 48)
         }
     }
 }
