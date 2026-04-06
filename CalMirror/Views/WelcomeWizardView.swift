@@ -5,6 +5,13 @@ import EventKit
 struct WelcomeWizardView: View {
     @Binding var hasCompletedOnboarding: Bool
     let eventStore: EventReading
+    let initialCalendars: [CalendarInfo]?
+
+    init(hasCompletedOnboarding: Binding<Bool>, eventStore: EventReading, initialCalendars: [CalendarInfo]? = nil) {
+        self._hasCompletedOnboarding = hasCompletedOnboarding
+        self.eventStore = eventStore
+        self.initialCalendars = initialCalendars
+    }
 
     @State private var currentStep = 0
     @State private var hasCalendarAccess = false
@@ -186,7 +193,7 @@ struct WelcomeWizardView: View {
             .padding(.top, 16)
             .padding(.bottom, 8)
 
-            CalendarSelectionView(eventStore: eventStore)
+            CalendarSelectionView(eventStore: eventStore, initialCalendars: initialCalendars)
 
             Button {
                 withAnimation { currentStep = 4 }
@@ -364,6 +371,15 @@ private struct WizardInfoPage: View {
 #Preview("Access Granted") {
     WelcomeWizardView(
         hasCompletedOnboarding: .constant(false),
+        eventStore: MockEventStore(),
+        initialCalendars: PreviewData.calendars
+    )
+    .modelContainer(previewModelContainer(populate: true))
+}
+
+#Preview("No Calendars") {
+    WelcomeWizardView(
+        hasCompletedOnboarding: .constant(false),
         eventStore: MockEventStore()
     )
     .modelContainer(previewModelContainer())
@@ -380,9 +396,10 @@ private struct WizardInfoPage: View {
 #Preview("Dark Mode") {
     WelcomeWizardView(
         hasCompletedOnboarding: .constant(false),
-        eventStore: MockEventStore(authorizationStatus: .notDetermined)
+        eventStore: MockEventStore(),
+        initialCalendars: PreviewData.calendars
     )
-    .modelContainer(previewModelContainer())
+    .modelContainer(previewModelContainer(populate: true))
     .preferredColorScheme(.dark)
 }
 #endif
