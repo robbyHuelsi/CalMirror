@@ -231,6 +231,7 @@ struct WelcomeWizardView: View {
 
     private var serverSettingsPage: some View {
         ServerSettingsView(
+            showTestButton: false,
             header: {
                 VStack(spacing: 4) {
                     Text("Connect Your Server")
@@ -243,17 +244,13 @@ struct WelcomeWizardView: View {
                 .padding(.top, 16)
                 .padding(.bottom, 8)
             },
-            footer: {
-                Button {
-                    withAnimation { currentStep = 5 }
-                } label: {
-                    Text("Continue")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                }
-                .buttonStyle(.borderedProminent)
-                .padding(.bottom, 48)
+            interactiveFooter: { isFormValid, performTest in
+                WizardServerFooter(
+                    isFormValid: isFormValid,
+                    performTest: performTest,
+                    onContinue: { withAnimation { currentStep = 5 } },
+                    onSkip: { withAnimation { currentStep = 5 } }
+                )
             }
         )
     }
@@ -325,6 +322,88 @@ struct WelcomeWizardView: View {
         } catch {
             hasCalendarAccess = false
             isCalendarDenied = true
+        }
+    }
+}
+
+// MARK: - Reusable Info Page (Pages 1, 2)
+
+private struct WizardServerFooter: View {
+    let isFormValid: Bool
+    let performTest: () async throws -> Bool
+    let onContinue: () -> Void
+    let onSkip: () -> Void
+
+    @State private var isTesting = false
+    @State private var showError = false
+    @State private var errorMessage = ""
+    @State private var showSuccess = false
+
+    var body: some View {
+        VStack(spacing: 12) {
+            continueButton
+
+            if !isTesting {
+                Button("Skip for Now") {
+                    onSkip()
+                }
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.bottom, 48)
+        .alert("Connection Failed", isPresented: $showError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorMessage)
+        }
+    }
+
+    private var isDisabled: Bool {
+        !isFormValid || isTesting || showSuccess
+    }
+
+    @ViewBuilder
+    private var continueButton: some View {
+        Group {
+            if isTesting {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(.white)
+            } else if showSuccess {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.white)
+            } else {
+                Text("Continue")
+            }
+        }
+        .font(.headline)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 20)
+        .background(isDisabled ? Color.gray.opacity(0.5) : Color.accentColor)
+        .foregroundStyle(.white)
+        .clipShape(Capsule())
+        .contentShape(Capsule())
+        .onTapGesture {
+            guard !isDisabled else { return }
+            Task { await testAndContinue() }
+        }
+    }
+
+    private func testAndContinue() async {
+        guard isFormValid, !isTesting, !showSuccess else { return }
+        isTesting = true
+        defer { if !showSuccess { isTesting = false } }
+
+        do {
+            _ = try await performTest()
+            isTesting = false
+            showSuccess = true
+            try? await Task.sleep(for: .seconds(1))
+            onContinue()
+        } catch {
+            errorMessage = error.localizedDescription
+            showError = true
         }
     }
 }

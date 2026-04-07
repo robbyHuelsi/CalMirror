@@ -23,15 +23,34 @@ struct ServerSettingsView: View {
     private let syncIntervalOptions = [15, 30, 60, 120]
     private let headerView: AnyView?
     private let footerView: AnyView?
+    private let showTestButton: Bool
+    private let interactiveFooterBuilder: ((_ isFormValid: Bool, _ performTest: @escaping () async throws -> Bool) -> AnyView)?
 
     init() {
         self.headerView = nil
         self.footerView = nil
+        self.showTestButton = true
+        self.interactiveFooterBuilder = nil
     }
 
     init<H: View, F: View>(@ViewBuilder header: () -> H, @ViewBuilder footer: () -> F) {
         self.headerView = AnyView(header())
         self.footerView = AnyView(footer())
+        self.showTestButton = true
+        self.interactiveFooterBuilder = nil
+    }
+
+    init<H: View, F: View>(
+        showTestButton: Bool = true,
+        @ViewBuilder header: () -> H,
+        @ViewBuilder interactiveFooter: @escaping (_ isFormValid: Bool, _ performTest: @escaping () async throws -> Bool) -> F
+    ) {
+        self.headerView = AnyView(header())
+        self.footerView = nil
+        self.showTestButton = showTestButton
+        self.interactiveFooterBuilder = { isFormValid, performTest in
+            AnyView(interactiveFooter(isFormValid, performTest))
+        }
     }
 
     var body: some View {
@@ -84,28 +103,30 @@ struct ServerSettingsView: View {
                 }
             }
 
-            Section {
-                Button {
-                    Task { await testConnection() }
-                } label: {
-                    HStack {
-                        if isTesting {
-                            ProgressView()
-                                .controlSize(.small)
+            if showTestButton {
+                Section {
+                    Button {
+                        Task { await testConnection() }
+                    } label: {
+                        HStack {
+                            if isTesting {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
+                            Text("Test Connection")
                         }
-                        Text("Test Connection")
                     }
-                }
-                .disabled(isTesting || serverURL.isEmpty || username.isEmpty || password.isEmpty)
+                    .disabled(isTesting || serverURL.isEmpty || username.isEmpty || password.isEmpty)
 
-                if let testResult {
-                    switch testResult {
-                    case .success:
-                        Label("Connection successful", systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                    case .failure(let message):
-                        Label(message, systemImage: "xmark.circle.fill")
-                            .foregroundStyle(.red)
+                    if let testResult {
+                        switch testResult {
+                        case .success:
+                            Label("Connection successful", systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                        case .failure(let message):
+                            Label(message, systemImage: "xmark.circle.fill")
+                                .foregroundStyle(.red)
+                        }
                     }
                 }
             }
@@ -113,6 +134,15 @@ struct ServerSettingsView: View {
             if let footerView {
                 Section {
                     footerView
+                }
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            }
+
+            if let interactiveFooterBuilder {
+                let isFormValid = !serverURL.isEmpty && !username.isEmpty && !password.isEmpty
+                Section {
+                    interactiveFooterBuilder(isFormValid, performTestConnection)
                 }
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
@@ -183,20 +213,28 @@ struct ServerSettingsView: View {
         try? modelContext.save()
     }
 
+    func performTestConnection() async throws -> Bool {
+        let client = try CalDAVClient(
+            serverURL: serverURL,
+            calendarPath: calendarPath,
+            username: username,
+            password: password
+        )
+        let success = try await client.testConnection()
+        if !success {
+            throw CalDAVError.invalidResponse
+        }
+        return true
+    }
+
     private func testConnection() async {
         isTesting = true
         testResult = nil
         defer { isTesting = false }
 
         do {
-            let client = try CalDAVClient(
-                serverURL: serverURL,
-                calendarPath: calendarPath,
-                username: username,
-                password: password
-            )
-            let success = try await client.testConnection()
-            testResult = success ? .success : .failure("Server responded but path may be invalid")
+            _ = try await performTestConnection()
+            testResult = .success
         } catch {
             testResult = .failure(error.localizedDescription)
         }
