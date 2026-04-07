@@ -19,6 +19,7 @@ struct ContentView: View {
     @State private var settingsDocument: SettingsDocument?
     @State private var importMessage: String?
     @AppStorage("showDeveloperTools") private var showDeveloperTools = false
+    @State private var showWelcomeWizard = false
 
     var body: some View {
         NavigationStack {
@@ -147,6 +148,18 @@ struct ContentView: View {
                 showImporter = true
             } label: {
                 Label("Import Settings", systemImage: "square.and.arrow.down")
+            }
+
+            Button {
+                showWelcomeWizard = true
+            } label: {
+                Label("Welcome Wizard", systemImage: "wand.and.stars")
+            }
+            .sheet(isPresented: $showWelcomeWizard) {
+                WelcomeWizardView(
+                    hasCompletedOnboarding: .constant(true),
+                    eventStore: eventStore
+                )
             }
         }
     }
