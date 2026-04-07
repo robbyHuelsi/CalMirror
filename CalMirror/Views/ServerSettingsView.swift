@@ -25,12 +25,14 @@ struct ServerSettingsView: View {
     private let footerView: AnyView?
     private let showTestButton: Bool
     private let interactiveFooterBuilder: ((_ isFormValid: Bool, _ performTest: @escaping () async throws -> Bool) -> AnyView)?
+    private let onFieldChange: (() -> Void)?
 
     init() {
         self.headerView = nil
         self.footerView = nil
         self.showTestButton = true
         self.interactiveFooterBuilder = nil
+        self.onFieldChange = nil
     }
 
     init<H: View, F: View>(@ViewBuilder header: () -> H, @ViewBuilder footer: () -> F) {
@@ -38,12 +40,14 @@ struct ServerSettingsView: View {
         self.footerView = AnyView(footer())
         self.showTestButton = true
         self.interactiveFooterBuilder = nil
+        self.onFieldChange = nil
     }
 
     init<H: View, F: View>(
         showTestButton: Bool = true,
         @ViewBuilder header: () -> H,
-        @ViewBuilder interactiveFooter: @escaping (_ isFormValid: Bool, _ performTest: @escaping () async throws -> Bool) -> F
+        @ViewBuilder interactiveFooter: @escaping (_ isFormValid: Bool, _ performTest: @escaping () async throws -> Bool) -> F,
+        onFieldChange: (() -> Void)? = nil
     ) {
         self.headerView = AnyView(header())
         self.footerView = nil
@@ -51,6 +55,7 @@ struct ServerSettingsView: View {
         self.interactiveFooterBuilder = { isFormValid, performTest in
             AnyView(interactiveFooter(isFormValid, performTest))
         }
+        self.onFieldChange = onFieldChange
     }
 
     var body: some View {
@@ -152,11 +157,26 @@ struct ServerSettingsView: View {
         .navigationTitle("Server Settings")
         .scrollContentBackground(headerView != nil ? .hidden : .automatic)
         .onAppear(perform: loadExisting)
-        .onChange(of: serverURL) { saveConfiguration() }
-        .onChange(of: username) { saveConfiguration() }
-        .onChange(of: password) { saveConfiguration() }
-        .onChange(of: calendarPath) { saveConfiguration() }
-        .onChange(of: syncInterval) { saveConfiguration() }
+        .onChange(of: serverURL) {
+            saveConfiguration()
+            if !isLoading { onFieldChange?() }
+        }
+        .onChange(of: username) {
+            saveConfiguration()
+            if !isLoading { onFieldChange?() }
+        }
+        .onChange(of: password) {
+            saveConfiguration()
+            if !isLoading { onFieldChange?() }
+        }
+        .onChange(of: calendarPath) {
+            saveConfiguration()
+            if !isLoading { onFieldChange?() }
+        }
+        .onChange(of: syncInterval) {
+            saveConfiguration()
+            if !isLoading { onFieldChange?() }
+        }
     }
 
     private func loadExisting() {

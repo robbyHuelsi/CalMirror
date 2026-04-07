@@ -20,6 +20,11 @@ struct WelcomeWizardView: View {
     @State private var privacyAcknowledged = false
     @State private var highlightPrivacyButton = false
 
+    // Server settings swipe block and button state
+    @State private var serverConnectionVerified = false
+    @State private var highlightServerButton = false
+    @State private var bypassServerSwipeBlock = false
+
     private let totalSteps = 6
 
     var body: some View {
@@ -43,6 +48,7 @@ struct WelcomeWizardView: View {
             #endif
             .animation(.easeInOut(duration: 0.3), value: currentStep)
             .onChange(of: currentStep) { oldValue, newValue in
+                // Privacy page swipe block
                 if oldValue == 1 && newValue > 1 && !privacyAcknowledged {
                     currentStep = 1
                     highlightPrivacyButton = true
@@ -50,6 +56,16 @@ struct WelcomeWizardView: View {
                         highlightPrivacyButton = false
                     }
                 }
+                // Server settings swipe block
+                if oldValue == 4 && newValue > 4 && !(serverConnectionVerified || bypassServerSwipeBlock) {
+                    currentStep = 4
+                    highlightServerButton = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        highlightServerButton = false
+                    }
+                }
+                // Always reset bypass after check (one-shot)
+                if oldValue == 4 { bypassServerSwipeBlock = false }
             }
         }
         .background {
@@ -249,9 +265,15 @@ struct WelcomeWizardView: View {
                     isFormValid: isFormValid,
                     performTest: performTest,
                     onContinue: { withAnimation { currentStep = 5 } },
-                    onSkip: { withAnimation { currentStep = 5 } }
+                    onSkip: {
+                        bypassServerSwipeBlock = true
+                        withAnimation { currentStep = 5 }
+                    },
+                    connectionVerified: $serverConnectionVerified,
+                    highlightButton: $highlightServerButton
                 )
-            }
+            },
+            onFieldChange: { serverConnectionVerified = false }
         )
     }
 
@@ -333,34 +355,45 @@ private struct WizardServerFooter: View {
     let performTest: () async throws -> Bool
     let onContinue: () -> Void
     let onSkip: () -> Void
+    @Binding var connectionVerified: Bool
+    @Binding var highlightButton: Bool
 
     @State private var isTesting = false
     @State private var showError = false
     @State private var errorMessage = ""
-    @State private var showSuccess = false
 
     var body: some View {
-        VStack(spacing: 12) {
-            continueButton
+        ScrollViewReader { scrollProxy in
+            VStack(spacing: 12) {
+                continueButton
 
-            if !isTesting {
-                Button("Skip for Now") {
-                    onSkip()
+                if !isTesting {
+                    Button("Skip for Now") {
+                        onSkip()
+                    }
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
                 }
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
             }
-        }
-        .padding(.bottom, 48)
-        .alert("Connection Failed", isPresented: $showError) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(errorMessage)
+            .id("wizardServerFooter")
+            .padding(.bottom, 48)
+            .alert("Connection Failed", isPresented: $showError) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(errorMessage)
+            }
+            .onChange(of: highlightButton) { _, highlighted in
+                if highlighted {
+                    withAnimation {
+                        scrollProxy.scrollTo("wizardServerFooter", anchor: .bottom)
+                    }
+                }
+            }
         }
     }
 
     private var isDisabled: Bool {
-        !isFormValid || isTesting || showSuccess
+        !isFormValid || isTesting || connectionVerified
     }
 
     @ViewBuilder
@@ -370,7 +403,7 @@ private struct WizardServerFooter: View {
                 ProgressView()
                     .controlSize(.small)
                     .tint(.white)
-            } else if showSuccess {
+            } else if connectionVerified {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(.white)
             } else {
@@ -384,6 +417,8 @@ private struct WizardServerFooter: View {
         .foregroundStyle(.white)
         .clipShape(Capsule())
         .contentShape(Capsule())
+        .scaleEffect(highlightButton ? 1.15 : 1.0)
+        .animation(.spring(response: 0.3, dampingFraction: 0.4), value: highlightButton)
         .onTapGesture {
             guard !isDisabled else { return }
             Task { await testAndContinue() }
@@ -391,14 +426,14 @@ private struct WizardServerFooter: View {
     }
 
     private func testAndContinue() async {
-        guard isFormValid, !isTesting, !showSuccess else { return }
+        guard isFormValid, !isTesting, !connectionVerified else { return }
         isTesting = true
-        defer { if !showSuccess { isTesting = false } }
+        defer { if !connectionVerified { isTesting = false } }
 
         do {
             _ = try await performTest()
             isTesting = false
-            showSuccess = true
+            connectionVerified = true
             try? await Task.sleep(for: .seconds(1))
             onContinue()
         } catch {
