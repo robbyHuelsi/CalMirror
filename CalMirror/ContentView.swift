@@ -19,10 +19,11 @@ struct ContentView: View {
     @State private var settingsDocument: SettingsDocument?
     @State private var importMessage: String?
     @AppStorage("showDeveloperTools") private var showDeveloperTools = false
-    @State private var showWelcomeWizard = false
+    @AppStorage("navigateToEventsOverview") private var navigateToEventsOverview = false
+    @State private var path = NavigationPath()
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             List {
                 statusSection
                 if showDeveloperTools {
@@ -62,6 +63,17 @@ struct ContentView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .scheduledSyncDidFire)) { _ in
                 Task { await autoSync() }
+            }
+            .navigationDestination(for: String.self) { destination in
+                if destination == "eventsOverview" {
+                    EventsOverviewView()
+                }
+            }
+            .onAppear {
+                if navigateToEventsOverview {
+                    navigateToEventsOverview = false
+                    path.append("eventsOverview")
+                }
             }
         }
     }
@@ -150,16 +162,12 @@ struct ContentView: View {
                 Label("Import Settings", systemImage: "square.and.arrow.down")
             }
 
-            Button {
-                showWelcomeWizard = true
+            Button(role: .destructive) {
+                UserDefaults.standard.set(false, forKey: "hasCompletedOnboarding")
+                UserDefaults.standard.set(false, forKey: "navigateToEventsOverview")
+                exit(0)
             } label: {
-                Label("Welcome Wizard", systemImage: "wand.and.stars")
-            }
-            .sheet(isPresented: $showWelcomeWizard) {
-                WelcomeWizardView(
-                    hasCompletedOnboarding: .constant(true),
-                    eventStore: eventStore
-                )
+                Label("Restart App into Welcome Wizard", systemImage: "wand.and.stars")
             }
         }
     }

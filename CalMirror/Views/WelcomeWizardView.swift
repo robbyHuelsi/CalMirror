@@ -13,6 +13,9 @@ struct WelcomeWizardView: View {
         self.initialCalendars = initialCalendars
     }
 
+    @Environment(SyncScheduler.self) private var syncScheduler
+    @Environment(\.modelContext) private var modelContext
+
     @State private var currentStep = 0
     @State private var hasCalendarAccess = false
     @State private var isCalendarDenied = false
@@ -24,6 +27,13 @@ struct WelcomeWizardView: View {
     @State private var serverConnectionVerified = false
     @State private var highlightServerButton = false
     @State private var bypassServerSwipeBlock = false
+
+    // Sync plan analysis result (nil = skipped or not yet analyzed)
+    @State private var syncPlan: SyncPlan?
+    @State private var showAnalysisError = false
+    @State private var analysisErrorMessage = ""
+
+    @AppStorage("navigateToEventsOverview") private var navigateToEventsOverview = false
 
     private let totalSteps = 6
 
@@ -264,8 +274,18 @@ struct WelcomeWizardView: View {
                 WizardServerFooter(
                     isFormValid: isFormValid,
                     performTest: performTest,
-                    onContinue: { withAnimation { currentStep = 5 } },
+                    onContinue: {
+                        let plan = await syncScheduler.syncEngine.analyzeSyncPlan(modelContext: modelContext)
+                        if !plan.errors.isEmpty {
+                            analysisErrorMessage = plan.errors.joined(separator: "\n")
+                            showAnalysisError = true
+                        } else {
+                            syncPlan = plan
+                            withAnimation { currentStep = 5 }
+                        }
+                    },
                     onSkip: {
+                        syncPlan = nil
                         bypassServerSwipeBlock = true
                         withAnimation { currentStep = 5 }
                     },
@@ -275,6 +295,27 @@ struct WelcomeWizardView: View {
             },
             onFieldChange: { serverConnectionVerified = false }
         )
+        .alert("Analysis Failed", isPresented: $showAnalysisError) {
+            Button("Retry") {
+                Task {
+                    let plan = await syncScheduler.syncEngine.analyzeSyncPlan(modelContext: modelContext)
+                    if !plan.errors.isEmpty {
+                        analysisErrorMessage = plan.errors.joined(separator: "\n")
+                        showAnalysisError = true
+                    } else {
+                        syncPlan = plan
+                        withAnimation { currentStep = 5 }
+                    }
+                }
+            }
+            Button("Skip", role: .cancel) {
+                syncPlan = nil
+                bypassServerSwipeBlock = true
+                withAnimation { currentStep = 5 }
+            }
+        } message: {
+            Text(analysisErrorMessage)
+        }
     }
 
     // MARK: - Page 6: Completion
@@ -305,17 +346,34 @@ struct WelcomeWizardView: View {
                     .glassEffect(in: .rect(cornerRadius: 20))
                     .padding(.horizontal, 16)
 
+                    if let syncPlan, syncPlan.entries.count > 0 {
+                        SyncPlanOverview(plan: syncPlan)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 16)
+                    }
+
                     Spacer()
 
-                    Button {
-                        hasCompletedOnboarding = true
-                    } label: {
-                        Text("Start Using CalMirror")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 14)
+                    VStack(spacing: 12) {
+                        Button {
+                            hasCompletedOnboarding = true
+                        } label: {
+                            Text("Start Using CalMirror")
+                                .font(.headline)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 14)
+                        }
+                        .buttonStyle(.borderedProminent)
+
+                        if syncPlan != nil {
+                            Button("Start and Show Event Details") {
+                                navigateToEventsOverview = true
+                                hasCompletedOnboarding = true
+                            }
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        }
                     }
-                    .buttonStyle(.borderedProminent)
                     .padding(.horizontal, 32)
                     .padding(.bottom, 48)
                 }
@@ -353,12 +411,13 @@ struct WelcomeWizardView: View {
 private struct WizardServerFooter: View {
     let isFormValid: Bool
     let performTest: () async throws -> Bool
-    let onContinue: () -> Void
+    let onContinue: () async -> Void
     let onSkip: () -> Void
     @Binding var connectionVerified: Bool
     @Binding var highlightButton: Bool
 
     @State private var isTesting = false
+    @State private var isAnalyzing = false
     @State private var showError = false
     @State private var errorMessage = ""
 
@@ -367,7 +426,7 @@ private struct WizardServerFooter: View {
             VStack(spacing: 12) {
                 continueButton
 
-                if !isTesting {
+                if !isTesting && !isAnalyzing {
                     Button("Skip for Now") {
                         onSkip()
                     }
@@ -393,16 +452,21 @@ private struct WizardServerFooter: View {
     }
 
     private var isDisabled: Bool {
-        !isFormValid || isTesting || connectionVerified
+        !isFormValid || isTesting || isAnalyzing || connectionVerified
     }
 
     @ViewBuilder
     private var continueButton: some View {
         Group {
-            if isTesting {
-                ProgressView()
-                    .controlSize(.small)
-                    .tint(.white)
+            if isTesting || isAnalyzing {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(.white)
+                    if isAnalyzing {
+                        Text("Analyzing…")
+                    }
+                }
             } else if connectionVerified {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(.white)
@@ -426,20 +490,82 @@ private struct WizardServerFooter: View {
     }
 
     private func testAndContinue() async {
-        guard isFormValid, !isTesting, !connectionVerified else { return }
+        guard isFormValid, !isTesting, !isAnalyzing, !connectionVerified else { return }
         isTesting = true
-        defer { if !connectionVerified { isTesting = false } }
 
         do {
             _ = try await performTest()
             isTesting = false
             connectionVerified = true
-            try? await Task.sleep(for: .seconds(1))
-            onContinue()
+            isAnalyzing = true
+            await onContinue()
+            isAnalyzing = false
         } catch {
+            isTesting = false
             errorMessage = error.localizedDescription
             showError = true
         }
+    }
+}
+
+// MARK: - Sync Plan Overview (Completion Page)
+
+private struct SyncPlanOverview: View {
+    let plan: SyncPlan
+
+    private struct CategoryInfo: Identifiable {
+        let id: EventSyncStatus
+        let status: EventSyncStatus
+        let count: Int
+        let label: String
+        let description: String
+        let color: Color
+    }
+
+    private var categories: [CategoryInfo] {
+        let all: [(EventSyncStatus, Int, String, String, Color)] = [
+            (.pending, plan.pendingCount, "Ready to Sync", "events will be uploaded on first sync", .blue),
+            (.synced, plan.syncedCount, "Already Synced", "events are already up to date", .green),
+            (.modified, plan.modifiedCount, "Modified", "events have local changes to push", .orange),
+            (.pendingDelete, plan.pendingDeleteCount, "To Remove", "events will be removed from server", .orange),
+            (.orphaned, plan.orphanedCount, "Orphaned", "events on server not in your calendars", .red),
+        ]
+        return all.compactMap { status, count, label, desc, color in
+            count > 0 ? CategoryInfo(id: status, status: status, count: count, label: label, description: desc, color: color) : nil
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Sync Overview")
+                .font(.headline)
+                .frame(maxWidth: .infinity, alignment: .center)
+
+            ForEach(categories) { category in
+                HStack(spacing: 12) {
+                    Image(systemName: category.status.iconName)
+                        .font(.title3)
+                        .foregroundStyle(category.color)
+                        .frame(width: 28)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text("\(category.count)")
+                                .font(.subheadline.weight(.bold))
+                            Text(category.label)
+                                .font(.subheadline.weight(.semibold))
+                        }
+                        Text(category.description)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+                }
+            }
+        }
+        .padding(16)
+        .glassEffect(in: .rect(cornerRadius: 16))
     }
 }
 
@@ -523,6 +649,7 @@ private struct WizardInfoPage: View {
         eventStore: MockEventStore(authorizationStatus: .notDetermined)
     )
     .modelContainer(previewModelContainer())
+    .environment(previewSyncScheduler())
 }
 
 #Preview("Access Granted") {
@@ -532,6 +659,7 @@ private struct WizardInfoPage: View {
         initialCalendars: PreviewData.calendars
     )
     .modelContainer(previewModelContainer(populate: true))
+    .environment(previewSyncScheduler())
 }
 
 #Preview("No Calendars") {
@@ -540,6 +668,7 @@ private struct WizardInfoPage: View {
         eventStore: MockEventStore()
     )
     .modelContainer(previewModelContainer())
+    .environment(previewSyncScheduler())
 }
 
 #Preview("Access Denied") {
@@ -548,6 +677,7 @@ private struct WizardInfoPage: View {
         eventStore: MockEventStore(authorizationStatus: .denied)
     )
     .modelContainer(previewModelContainer())
+    .environment(previewSyncScheduler())
 }
 
 #Preview("Dark Mode") {
@@ -557,6 +687,7 @@ private struct WizardInfoPage: View {
         initialCalendars: PreviewData.calendars
     )
     .modelContainer(previewModelContainer(populate: true))
+    .environment(previewSyncScheduler())
     .preferredColorScheme(.dark)
 }
 #endif
