@@ -10,8 +10,9 @@ struct EventsOverviewView: View {
     @State private var deleteConfirmation: SyncPlanEntry?
     @State private var activeFilter: EventSyncStatus?
 
-    init(initialSyncPlan: SyncPlan? = nil) {
+    init(initialSyncPlan: SyncPlan? = nil, initialFilter: EventSyncStatus? = nil) {
         _syncPlan = State(initialValue: initialSyncPlan)
+        _activeFilter = State(initialValue: initialFilter)
     }
 
     private var displayEntries: [SyncPlanEntry] {

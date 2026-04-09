@@ -34,6 +34,7 @@ struct WelcomeWizardView: View {
     @State private var analysisErrorMessage = ""
 
     @AppStorage("navigateToEventsOverview") private var navigateToEventsOverview = false
+    @AppStorage("navigateToEventsOverviewOrphaned") private var navigateToEventsOverviewOrphaned = false
 
     private let totalSteps = 6
 
@@ -352,26 +353,62 @@ struct WelcomeWizardView: View {
                             .padding(.top, 16)
                     }
 
+                    if let syncPlan, syncPlan.orphanedCount > 0 {
+                        HStack(spacing: 12) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.title3)
+                                .foregroundStyle(.red)
+
+                            Text("\(syncPlan.orphanedCount) orphaned event\(syncPlan.orphanedCount == 1 ? "" : "s") found on the server that don't match any local calendar. You can review and delete them in the Events view.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(16)
+                        .glassEffect(in: .rect(cornerRadius: 16))
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+                    }
+
                     Spacer()
 
                     VStack(spacing: 12) {
-                        Button {
-                            hasCompletedOnboarding = true
-                        } label: {
-                            Text("Start Using CalMirror")
-                                .font(.headline)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 14)
-                        }
-                        .buttonStyle(.borderedProminent)
+                        if let syncPlan, syncPlan.orphanedCount > 0 {
+                            Button {
+                                navigateToEventsOverviewOrphaned = true
+                                hasCompletedOnboarding = true
+                            } label: {
+                                Text("Show Orphaned Events")
+                                    .font(.headline)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 14)
+                            }
+                            .buttonStyle(.borderedProminent)
 
-                        if syncPlan != nil {
-                            Button("Start and Show Event Details") {
-                                navigateToEventsOverview = true
+                            Button("Finish Setup") {
                                 hasCompletedOnboarding = true
                             }
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
+                        } else {
+                            Button {
+                                hasCompletedOnboarding = true
+                            } label: {
+                                Text("Finish Setup")
+                                    .font(.headline)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 14)
+                            }
+                            .buttonStyle(.borderedProminent)
+
+                            if syncPlan != nil {
+                                Button("Finish Setup and Show Event Details") {
+                                    navigateToEventsOverview = true
+                                    hasCompletedOnboarding = true
+                                }
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            }
                         }
                     }
                     .padding(.horizontal, 32)

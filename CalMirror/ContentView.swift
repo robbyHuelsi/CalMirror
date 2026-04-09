@@ -20,6 +20,7 @@ struct ContentView: View {
     @State private var importMessage: String?
     @AppStorage("showDeveloperTools") private var showDeveloperTools = false
     @AppStorage("navigateToEventsOverview") private var navigateToEventsOverview = false
+    @AppStorage("navigateToEventsOverviewOrphaned") private var navigateToEventsOverviewOrphaned = false
     @State private var path = NavigationPath()
 
     var body: some View {
@@ -65,12 +66,20 @@ struct ContentView: View {
                 Task { await autoSync() }
             }
             .navigationDestination(for: String.self) { destination in
-                if destination == "eventsOverview" {
+                switch destination {
+                case "eventsOverview":
                     EventsOverviewView()
+                case "eventsOverviewOrphaned":
+                    EventsOverviewView(initialFilter: .orphaned)
+                default:
+                    EmptyView()
                 }
             }
             .onAppear {
-                if navigateToEventsOverview {
+                if navigateToEventsOverviewOrphaned {
+                    navigateToEventsOverviewOrphaned = false
+                    path.append("eventsOverviewOrphaned")
+                } else if navigateToEventsOverview {
                     navigateToEventsOverview = false
                     path.append("eventsOverview")
                 }
@@ -165,6 +174,7 @@ struct ContentView: View {
             Button(role: .destructive) {
                 UserDefaults.standard.set(false, forKey: "hasCompletedOnboarding")
                 UserDefaults.standard.set(false, forKey: "navigateToEventsOverview")
+                UserDefaults.standard.set(false, forKey: "navigateToEventsOverviewOrphaned")
                 exit(0)
             } label: {
                 Label("Restart App into Welcome Wizard", systemImage: "wand.and.stars")
