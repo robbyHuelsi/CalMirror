@@ -367,10 +367,10 @@ struct WelcomeWizardView: View {
                         .padding(16)
                         .glassEffect(in: .rect(cornerRadius: 16))
                         .padding(.horizontal, 16)
-                        .padding(.top, 12)
+                        .padding(.top, 16)
                     }
 
-                    Spacer()
+                    Spacer(minLength: 16)
 
                     VStack(spacing: 12) {
                         if let syncPlan, syncPlan.orphanedCount > 0 {
