@@ -563,7 +563,7 @@ private struct SyncPlanOverview: View {
         let all: [(EventSyncStatus, Int, String, String, Color)] = [
             (.pending, plan.pendingCount, "Ready to Sync", "events will be uploaded on first sync", .blue),
             (.synced, plan.syncedCount, "Already Synced", "events are already up to date", .green),
-            (.modified, plan.modifiedCount, "Modified", "events have local changes to push", .orange),
+            (.modified, plan.modifiedCount, "Modified", "events have local changes to push", .purple),
             (.pendingDelete, plan.pendingDeleteCount, "To Remove", "events will be removed from server", .orange),
             (.orphaned, plan.orphanedCount, "Orphaned", "events on server not in your calendars", .red),
         ]

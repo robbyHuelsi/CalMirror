@@ -1,6 +1,8 @@
 import SwiftUI
 import SwiftData
 
+// MARK: - Events Overview View
+
 struct EventsOverviewView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(SyncScheduler.self) private var syncScheduler
@@ -180,7 +182,6 @@ struct EventsOverviewView: View {
             .padding(.horizontal)
             .padding(.vertical, 8)
         }
-        .glassEffect(.regular.interactive())
     }
 
     private func analyze() async {
@@ -225,7 +226,7 @@ private struct StatusBadge: View {
     private var color: Color {
         switch status {
         case .synced: .green
-        case .modified: .orange
+        case .modified: .purple
         case .pending: .blue
         case .pendingDelete: .orange
         case .orphaned: .red
@@ -236,24 +237,22 @@ private struct StatusBadge: View {
     private var isFiltered: Bool { activeFilter != nil && !isActive }
 
     var body: some View {
-        VStack(spacing: 2) {
-            HStack(spacing: 3) {
+        VStack(spacing: 3) {
+            HStack(spacing: 4) {
                 Image(systemName: status.iconName)
                     .foregroundStyle(color)
+                    .fontWeight(isActive ? .bold : .regular)
                 Text("\(count)")
                     .fontWeight(isActive ? .bold : .regular)
             }
-            .font(.caption)
+            .font(.callout)
             Text(status.displayName)
-                .font(.caption2)
+                .font(.caption)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(
-            Capsule()
-                .fill(isActive ? color.opacity(0.2) : Color.clear)
-        )
-        .opacity(isFiltered ? 0.4 : 1.0)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .glassEffect(.clear.interactive().tint(isActive ? color.opacity(0.5) : .clear), in: .capsule)
+        .shadow(color: .black.opacity(0.12), radius: 4, y: 2)
         .contentShape(Capsule())
         .onTapGesture(perform: onTap)
     }
@@ -290,7 +289,7 @@ private struct EventRow: View {
     private var statusColor: Color {
         switch entry.status {
         case .synced: .green
-        case .modified: .orange
+        case .modified: .purple
         case .pending: .blue
         case .pendingDelete: .orange
         case .orphaned: .red

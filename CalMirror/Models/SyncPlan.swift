@@ -26,7 +26,7 @@ enum EventSyncStatus: Sendable {
     var iconColor: String {
         switch self {
         case .synced: "green"
-        case .modified: "orange"
+        case .modified: "purple"
         case .pending: "blue"
         case .pendingDelete: "orange"
         case .orphaned: "red"
