@@ -27,19 +27,21 @@ struct CalMirrorApp: App {
 
     var body: some Scene {
         WindowGroup {
-            if hasCompletedOnboarding {
-                ContentView(eventStore: eventStore)
-                    .environment(syncScheduler)
-                    .task {
-                        await startScheduler()
-                    }
-            } else {
-                WelcomeWizardView(
-                    hasCompletedOnboarding: $hasCompletedOnboarding,
-                    eventStore: eventStore
-                )
+            ContentView(eventStore: eventStore)
                 .environment(syncScheduler)
-            }
+                .task {
+                    await startScheduler()
+                }
+                .fullScreenCover(isPresented: Binding(
+                    get: { !hasCompletedOnboarding },
+                    set: { if !$0 { hasCompletedOnboarding = true } }
+                )) {
+                    WelcomeWizardView(
+                        hasCompletedOnboarding: $hasCompletedOnboarding,
+                        eventStore: eventStore
+                    )
+                    .environment(syncScheduler)
+                }
         }
         .modelContainer(sharedModelContainer)
         #if os(iOS)

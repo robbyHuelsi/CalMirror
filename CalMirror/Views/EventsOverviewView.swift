@@ -9,10 +9,12 @@ struct EventsOverviewView: View {
     @State private var isAnalyzing = false
     @State private var deleteConfirmation: SyncPlanEntry?
     @State private var activeFilter: EventSyncStatus?
+    private let delayedFilter: EventSyncStatus?
 
-    init(initialSyncPlan: SyncPlan? = nil, initialFilter: EventSyncStatus? = nil) {
+    init(initialSyncPlan: SyncPlan? = nil, initialFilter: EventSyncStatus? = nil, delayedFilter: EventSyncStatus? = nil) {
         _syncPlan = State(initialValue: initialSyncPlan)
         _activeFilter = State(initialValue: initialFilter)
+        self.delayedFilter = delayedFilter
     }
 
     private var displayEntries: [SyncPlanEntry] {
@@ -123,6 +125,13 @@ struct EventsOverviewView: View {
                 if let target = initialScrollTarget {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                         proxy.scrollTo(target, anchor: .top)
+                    }
+                }
+                if let delayedFilter, syncPlan != nil, activeFilter == nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        withAnimation(.easeInOut(duration: 0.35)) {
+                            activeFilter = delayedFilter
+                        }
                     }
                 }
             }

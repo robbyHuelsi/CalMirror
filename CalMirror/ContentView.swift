@@ -70,18 +70,27 @@ struct ContentView: View {
                 case "eventsOverview":
                     EventsOverviewView()
                 case "eventsOverviewOrphaned":
-                    EventsOverviewView(initialFilter: .orphaned)
+                    EventsOverviewView(delayedFilter: .orphaned)
                 default:
                     EmptyView()
                 }
             }
-            .onAppear {
-                if navigateToEventsOverviewOrphaned {
-                    navigateToEventsOverviewOrphaned = false
-                    path.append("eventsOverviewOrphaned")
-                } else if navigateToEventsOverview {
-                    navigateToEventsOverview = false
-                    path.append("eventsOverview")
+            .onChange(of: navigateToEventsOverviewOrphaned) { _, shouldNavigate in
+                guard shouldNavigate else { return }
+                navigateToEventsOverviewOrphaned = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    withAnimation {
+                        path.append("eventsOverviewOrphaned")
+                    }
+                }
+            }
+            .onChange(of: navigateToEventsOverview) { _, shouldNavigate in
+                guard shouldNavigate else { return }
+                navigateToEventsOverview = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    withAnimation {
+                        path.append("eventsOverview")
+                    }
                 }
             }
         }
