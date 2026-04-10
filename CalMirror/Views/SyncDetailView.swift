@@ -7,7 +7,6 @@ struct SyncDetailView: View {
     @Query private var serverConfigs: [ServerConfiguration]
     @Query(filter: #Predicate<CalendarSyncConfig> { $0.isEnabled }) private var enabledCalendars: [CalendarSyncConfig]
 
-    @Binding var syncHistory: [SyncResult]
     @Binding var isSyncing: Bool
 
     var body: some View {
@@ -72,10 +71,9 @@ struct SyncDetailView: View {
     private func manualSync() async {
         isSyncing = true
         let result = await syncScheduler.triggerSync(modelContext: modelContext)
-        syncHistory.insert(result, at: 0)
-        if syncHistory.count > 50 {
-            syncHistory = Array(syncHistory.prefix(50))
-        }
+        let record = SyncRecord(from: result)
+        modelContext.insert(record)
+        SyncRecord.deleteOlderThan(days: 10, context: modelContext)
         isSyncing = false
     }
 }
@@ -86,7 +84,6 @@ struct SyncDetailView: View {
 #Preview("Idle") {
     NavigationStack {
         SyncDetailView(
-            syncHistory: .constant([]),
             isSyncing: .constant(false)
         )
     }
@@ -97,7 +94,6 @@ struct SyncDetailView: View {
 #Preview("After Sync") {
     NavigationStack {
         SyncDetailView(
-            syncHistory: .constant(PreviewData.syncResults),
             isSyncing: .constant(false)
         )
     }
@@ -111,7 +107,6 @@ struct SyncDetailView: View {
 #Preview("Syncing") {
     NavigationStack {
         SyncDetailView(
-            syncHistory: .constant(PreviewData.syncResults),
             isSyncing: .constant(true)
         )
     }
@@ -125,7 +120,6 @@ struct SyncDetailView: View {
 #Preview("Dark Mode") {
     NavigationStack {
         SyncDetailView(
-            syncHistory: .constant(PreviewData.syncResults),
             isSyncing: .constant(false)
         )
     }

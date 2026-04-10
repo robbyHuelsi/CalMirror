@@ -124,14 +124,29 @@ enum SchemaV1: VersionedSchema {
     }
 }
 
+// MARK: - Schema V2 (Adds SyncRecord)
+
+enum SchemaV2: VersionedSchema {
+    static var versionIdentifier = Schema.Version(2, 0, 0)
+
+    static var models: [any PersistentModel.Type] {
+        [CachedEvent.self, ServerConfiguration.self, CalendarSyncConfig.self, SyncRecord.self]
+    }
+}
+
 // MARK: - Migration Plan
 
 enum CalMirrorMigrationPlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] {
-        [SchemaV1.self]
+        [SchemaV1.self, SchemaV2.self]
     }
 
     static var stages: [MigrationStage] {
-        []
+        [migrateV1toV2]
     }
+
+    static let migrateV1toV2 = MigrationStage.lightweight(
+        fromVersion: SchemaV1.self,
+        toVersion: SchemaV2.self
+    )
 }

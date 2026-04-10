@@ -12,6 +12,8 @@ struct SyncResult: Sendable {
     var deleted: Int = 0
     var errors: [String] = []
     var timestamp: Date = Date()
+    var detailedEntries: [SyncRecordEntry] = []
+    var logMessages: [SyncLogMessage] = []
 
     var totalChanges: Int { created + updated + deleted }
 
@@ -26,6 +28,13 @@ struct SyncResult: Sendable {
         if !errors.isEmpty { parts.append("\(errors.count) errors") }
         return parts.joined(separator: ", ")
     }
+
+    mutating func log(_ severity: SyncMessageSeverity, _ text: String) {
+        logMessages.append(SyncLogMessage(severity: severity, text: text))
+    }
+
+    /// Convenience: add a SyncRecordMessage (alias for log messages stored in SyncResult).
+    typealias SyncLogMessage = SyncRecordMessage
 }
 
 /// Orchestrates the sync process between EventKit and a CalDAV server.
@@ -372,7 +381,10 @@ final class SyncEngine {
         let (plan, analysisContext) = await analyzeInternal(modelContext: modelContext)
 
         guard let ctx = analysisContext else {
-            let result = SyncResult(errors: plan.errors)
+            var result = SyncResult(errors: plan.errors)
+            for error in plan.errors {
+                result.log(.error, error)
+            }
             lastSyncResult = result
             isSyncing = false
             return result
@@ -384,6 +396,7 @@ final class SyncEngine {
         let pendingDeletes = ctx.pendingDeletes
         let cachedByIdentifier = ctx.cachedByIdentifier
 
+        result.log(.info, "Starting sync: \(pendingPuts.count) PUTs, \(pendingDeletes.count) DELETEs")
         logger.info("Pending operations: \(pendingPuts.count) PUTs, \(pendingDeletes.count) DELETEs")
         for put in pendingPuts {
             logger.debug("  PUT: '\(put.title)' uid=\(put.remoteUID) new=\(put.isNew)")
@@ -427,6 +440,7 @@ final class SyncEngine {
                     )
                     modelContext.insert(cached)
                     result.created += 1
+                    result.detailedEntries.append(SyncRecordEntry(title: putResult.title, changeType: .created))
                 } else if let cached = cachedByIdentifier[putResult.eventIdentifier] {
                     cached.title = putResult.title
                     cached.startDate = putResult.startDate
@@ -439,10 +453,13 @@ final class SyncEngine {
                     cached.contentHash = putResult.contentHash ?? cached.contentHash
                     cached.lastSyncedAt = Date()
                     result.updated += 1
+                    result.detailedEntries.append(SyncRecordEntry(title: putResult.title, changeType: .updated))
                 }
             } else if let error = putResult.error {
                 let action = putResult.isNew ? "Create" : "Update"
                 result.errors.append("\(action) failed for '\(putResult.title)': \(error)")
+                result.detailedEntries.append(SyncRecordEntry(title: putResult.title, changeType: .error, errorMessage: error))
+                result.log(.error, "\(action) failed for '\(putResult.title)': \(error)")
             }
         }
 
@@ -451,9 +468,12 @@ final class SyncEngine {
                 if let cached = cachedByIdentifier[deleteResult.eventIdentifier] {
                     modelContext.delete(cached)
                     result.deleted += 1
+                    result.detailedEntries.append(SyncRecordEntry(title: deleteResult.title, changeType: .deleted))
                 }
             } else if let error = deleteResult.error {
                 result.errors.append("Delete failed for '\(deleteResult.title)': \(error)")
+                result.detailedEntries.append(SyncRecordEntry(title: deleteResult.title, changeType: .error, errorMessage: error))
+                result.log(.error, "Delete failed for '\(deleteResult.title)': \(error)")
             }
         }
 
@@ -462,6 +482,13 @@ final class SyncEngine {
             try modelContext.save()
         } catch {
             result.errors.append("Failed to save cache: \(error.localizedDescription)")
+            result.log(.error, "Failed to save cache: \(error.localizedDescription)")
+        }
+
+        if result.totalChanges == 0 && result.errors.isEmpty {
+            result.log(.info, "No changes detected")
+        } else {
+            result.log(.info, "Sync finished: \(result.summary)")
         }
 
         logger.info("========== SYNC FINISHED: \(result.summary) ==========")

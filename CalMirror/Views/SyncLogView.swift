@@ -1,76 +1,86 @@
 import SwiftUI
+import SwiftData
 
 struct SyncLogView: View {
-    let syncResults: [SyncResult]
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: \SyncRecord.timestamp, order: .reverse) private var syncRecords: [SyncRecord]
 
     var body: some View {
         List {
-            if syncResults.isEmpty {
+            if syncRecords.isEmpty {
                 ContentUnavailableView(
                     "No Sync History",
                     systemImage: "clock",
                     description: Text("Sync history will appear here after the first sync.")
                 )
             } else {
-                ForEach(Array(syncResults.enumerated()), id: \.offset) { _, result in
-                    SyncLogRow(result: result)
+                ForEach(syncRecords) { record in
+                    NavigationLink {
+                        SyncLogDetailsView(record: record)
+                    } label: {
+                        SyncLogRow(record: record)
+                    }
                 }
             }
         }
         .navigationTitle("Sync Log")
+        .task {
+            SyncRecord.deleteOlderThan(days: 10, context: modelContext)
+        }
     }
 }
 
 private struct SyncLogRow: View {
-    let result: SyncResult
+    let record: SyncRecord
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Image(systemName: result.errors.isEmpty ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                    .foregroundStyle(result.errors.isEmpty ? .green : .orange)
+        HStack(spacing: 12) {
+            Image(systemName: record.isSuccess ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(record.isSuccess ? .green : .red)
+                .font(.title2)
+                .frame(width: 32)
 
-                Text(result.timestamp, style: .relative)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(record.isSuccess ? "Sync erfolgreich" : "Sync mit Fehlern")
+                    .font(.subheadline.weight(.medium))
 
-                Spacer()
-
-                Text(result.timestamp, format: .dateTime.hour().minute())
+                Text(record.timestamp, format: .dateTime.day().month().year().hour().minute())
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                HStack(spacing: 10) {
+                    if record.createdCount > 0 {
+                        Label("\(record.createdCount)", systemImage: SyncChangeType.created.iconName)
+                            .font(.caption)
+                            .foregroundStyle(SyncChangeType.created.color)
+                    }
+                    if record.updatedCount > 0 {
+                        Label("\(record.updatedCount)", systemImage: SyncChangeType.updated.iconName)
+                            .font(.caption)
+                            .foregroundStyle(SyncChangeType.updated.color)
+                    }
+                    if record.deletedCount > 0 {
+                        Label("\(record.deletedCount)", systemImage: SyncChangeType.deleted.iconName)
+                            .font(.caption)
+                            .foregroundStyle(SyncChangeType.deleted.color)
+                    }
+                    if record.totalChanges == 0 && record.isSuccess {
+                        Text("No changes")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if record.hasErrors {
+                        let errorCount = record.messages.count(where: { $0.severity == .error })
+                        if errorCount > 0 {
+                            Label("\(errorCount)", systemImage: SyncChangeType.error.iconName)
+                                .font(.caption)
+                                .foregroundStyle(SyncChangeType.error.color)
+                        }
+                    }
+                }
             }
 
-            HStack(spacing: 12) {
-                if result.created > 0 {
-                    Label("\(result.created)", systemImage: "plus.circle")
-                        .font(.caption)
-                        .foregroundStyle(.green)
-                }
-                if result.updated > 0 {
-                    Label("\(result.updated)", systemImage: "arrow.triangle.2.circlepath")
-                        .font(.caption)
-                        .foregroundStyle(.blue)
-                }
-                if result.deleted > 0 {
-                    Label("\(result.deleted)", systemImage: "minus.circle")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                }
-                if result.totalChanges == 0 && result.errors.isEmpty {
-                    Text("No changes")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            if !result.errors.isEmpty {
-                ForEach(result.errors, id: \.self) { error in
-                    Text(error)
-                        .font(.caption2)
-                        .foregroundStyle(.red)
-                }
-            }
+            Spacer()
         }
         .padding(.vertical, 4)
     }
@@ -81,20 +91,23 @@ private struct SyncLogRow: View {
 #if DEBUG
 #Preview("With Results") {
     NavigationStack {
-        SyncLogView(syncResults: PreviewData.syncResults)
+        SyncLogView()
     }
+    .modelContainer(previewModelContainer(populate: true))
 }
 
 #Preview("Empty") {
     NavigationStack {
-        SyncLogView(syncResults: [])
+        SyncLogView()
     }
+    .modelContainer(previewModelContainer())
 }
 
 #Preview("Dark Mode") {
     NavigationStack {
-        SyncLogView(syncResults: PreviewData.syncResults)
+        SyncLogView()
     }
+    .modelContainer(previewModelContainer(populate: true))
     .preferredColorScheme(.dark)
 }
 #endif

@@ -10,7 +10,7 @@ struct CalMirrorApp: App {
     var sharedModelContainer: ModelContainer = {
         do {
             return try ModelContainer(
-                for: CachedEvent.self, ServerConfiguration.self, CalendarSyncConfig.self,
+                for: CachedEvent.self, ServerConfiguration.self, CalendarSyncConfig.self, SyncRecord.self,
                 migrationPlan: CalMirrorMigrationPlan.self
             )
         } catch {

@@ -58,7 +58,7 @@ func previewSyncScheduler(
 @MainActor
 func previewModelContainer(populate: Bool = false) -> ModelContainer {
     let container = try! ModelContainer(
-        for: CachedEvent.self, ServerConfiguration.self, CalendarSyncConfig.self,
+        for: CachedEvent.self, ServerConfiguration.self, CalendarSyncConfig.self, SyncRecord.self,
         configurations: ModelConfiguration(isStoredInMemoryOnly: true)
     )
     if populate {
@@ -81,6 +81,11 @@ func previewModelContainer(populate: Bool = false) -> ModelContainer {
         // Cached events
         for event in PreviewData.cachedEvents {
             context.insert(event)
+        }
+
+        // Sync records
+        for record in PreviewData.syncRecordSamples {
+            context.insert(record)
         }
     }
     return container
@@ -366,6 +371,84 @@ enum PreviewData {
                 created: 0, updated: 0, deleted: 0, errors: [],
                 timestamp: cal.date(byAdding: .day, value: -1, to: now)!
             ),
+        ]
+    }
+
+    // MARK: Sync Records (SwiftData)
+
+    static var syncRecordSuccess: SyncRecord {
+        SyncRecord(
+            timestamp: Date(),
+            createdCount: 3,
+            updatedCount: 1,
+            deletedCount: 0,
+            entries: [
+                SyncRecordEntry(title: "Team Standup", changeType: .created),
+                SyncRecordEntry(title: "Sprint Planning", changeType: .created),
+                SyncRecordEntry(title: "Retrospective", changeType: .created),
+                SyncRecordEntry(title: "Zahnarzt", changeType: .updated),
+            ],
+            messages: [
+                SyncRecordMessage(severity: .info, text: "Starting sync: 4 PUTs, 0 DELETEs"),
+                SyncRecordMessage(severity: .info, text: "Sync finished: 3 created, 1 updated"),
+            ]
+        )
+    }
+
+    static var syncRecordWithErrors: SyncRecord {
+        SyncRecord(
+            timestamp: Calendar.current.date(byAdding: .hour, value: -5, to: Date())!,
+            createdCount: 1,
+            updatedCount: 0,
+            deletedCount: 0,
+            entries: [
+                SyncRecordEntry(title: "Team Standup", changeType: .created),
+                SyncRecordEntry(title: "Sprint Planning", changeType: .error, errorMessage: "Authentication failed: 401 Unauthorized"),
+            ],
+            messages: [
+                SyncRecordMessage(severity: .info, text: "Starting sync: 2 PUTs, 0 DELETEs"),
+                SyncRecordMessage(severity: .error, text: "Create failed for 'Sprint Planning': Authentication failed: 401 Unauthorized"),
+                SyncRecordMessage(severity: .warning, text: "Sync completed with errors"),
+            ]
+        )
+    }
+
+    static var syncRecordNoChanges: SyncRecord {
+        SyncRecord(
+            timestamp: Calendar.current.date(byAdding: .day, value: -1, to: Date())!,
+            createdCount: 0,
+            updatedCount: 0,
+            deletedCount: 0,
+            entries: [],
+            messages: [
+                SyncRecordMessage(severity: .info, text: "Starting sync: 0 PUTs, 0 DELETEs"),
+                SyncRecordMessage(severity: .info, text: "No changes detected"),
+            ]
+        )
+    }
+
+    static var syncRecordSamples: [SyncRecord] {
+        let cal = Calendar.current
+        let now = Date()
+        return [
+            syncRecordSuccess,
+            SyncRecord(
+                timestamp: cal.date(byAdding: .hour, value: -2, to: now)!,
+                createdCount: 0,
+                updatedCount: 2,
+                deletedCount: 1,
+                entries: [
+                    SyncRecordEntry(title: "Zahnarzt", changeType: .updated),
+                    SyncRecordEntry(title: "Sprint Planning", changeType: .updated),
+                    SyncRecordEntry(title: "Alte Besprechung", changeType: .deleted),
+                ],
+                messages: [
+                    SyncRecordMessage(severity: .info, text: "Starting sync: 2 PUTs, 1 DELETEs"),
+                    SyncRecordMessage(severity: .info, text: "Sync finished: 2 updated, 1 deleted"),
+                ]
+            ),
+            syncRecordWithErrors,
+            syncRecordNoChanges,
         ]
     }
 }

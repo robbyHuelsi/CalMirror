@@ -12,7 +12,6 @@ struct ContentView: View {
 
     let eventStore: EventReading
 
-    @State private var syncHistory: [SyncResult] = []
     @State private var isSyncing = false
     @State private var showExporter = false
     @State private var showImporter = false
@@ -138,7 +137,7 @@ struct ContentView: View {
             }
 
             NavigationLink {
-                SyncDetailView(syncHistory: $syncHistory, isSyncing: $isSyncing)
+                SyncDetailView(isSyncing: $isSyncing)
             } label: {
                 GlassTileView(systemImage: "arrow.triangle.2.circlepath", title: "Synchronization", tintColor: .purple) {
                     if let lastSync = syncScheduler.lastSyncDate {
@@ -166,7 +165,7 @@ struct ContentView: View {
 
             VStack(spacing: 0) {
                 NavigationLink {
-                    SyncLogView(syncResults: syncHistory)
+                    SyncLogView()
                 } label: {
                     Label("Sync Log", systemImage: "list.bullet.clipboard")
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -234,10 +233,9 @@ struct ContentView: View {
         guard !isSyncing else { return }
         isSyncing = true
         let result = await syncScheduler.triggerSync(modelContext: modelContext)
-        syncHistory.insert(result, at: 0)
-        if syncHistory.count > 50 {
-            syncHistory = Array(syncHistory.prefix(50))
-        }
+        let record = SyncRecord(from: result)
+        modelContext.insert(record)
+        SyncRecord.deleteOlderThan(days: 10, context: modelContext)
         isSyncing = false
     }
 
