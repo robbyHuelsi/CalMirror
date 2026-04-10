@@ -11,6 +11,9 @@ struct EventsOverviewView: View {
     @State private var isAnalyzing = false
     @State private var deleteConfirmation: SyncPlanEntry?
     @State private var activeFilter: EventSyncStatus?
+    @State private var isDeletingOrphans = false
+    @State private var deleteOrphansProgress: (current: Int, total: Int)?
+    @State private var showDeleteAllOrphansConfirmation = false
     private let delayedFilter: EventSyncStatus?
 
     init(initialSyncPlan: SyncPlan? = nil, initialFilter: EventSyncStatus? = nil, delayedFilter: EventSyncStatus? = nil) {
@@ -139,7 +142,13 @@ struct EventsOverviewView: View {
             }
             .safeAreaInset(edge: .bottom) {
                 if let plan = syncPlan, !(syncPlan?.entries ?? []).isEmpty {
-                    statusBar(plan)
+                    VStack(spacing: 8) {
+                        if showOrphanedActionBar {
+                            orphanedActionBar()
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
+                        statusBar(plan)
+                    }
                 }
             }
         }
@@ -156,8 +165,14 @@ struct EventsOverviewView: View {
             }
         } message: {
             Text("This will permanently remove \"\(deleteConfirmation?.title ?? "")\" from the server.")
-        }
-    }
+        }        .alert("Delete All Orphaned Events?", isPresented: $showDeleteAllOrphansConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete \(syncPlan?.orphanedCount ?? 0) Events", role: .destructive) {
+                Task { await deleteAllOrphans() }
+            }
+        } message: {
+            Text("This will permanently remove \(syncPlan?.orphanedCount ?? 0) orphaned events from the server.")
+        }    }
 
     @ViewBuilder
     private func statusBar(_ plan: SyncPlan) -> some View {
@@ -182,6 +197,44 @@ struct EventsOverviewView: View {
             .padding(.horizontal)
             .padding(.vertical, 8)
         }
+    }
+
+    private var showOrphanedActionBar: Bool {
+        (activeFilter == .orphaned && (syncPlan?.orphanedCount ?? 0) > 0) || isDeletingOrphans
+    }
+
+    @ViewBuilder
+    private func orphanedActionBar() -> some View {
+        HStack(spacing: 12) {
+            if isDeletingOrphans, let progress = deleteOrphansProgress {
+                ProgressView()
+                    .tint(.white)
+                Text("Deleting \(progress.current)/\(progress.total)…")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.white)
+            } else {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.white)
+                Text("\(syncPlan?.orphanedCount ?? 0) orphaned events on server")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.white)
+            }
+            Spacer()
+            Button {
+                showDeleteAllOrphansConfirmation = true
+            } label: {
+                Image(systemName: "trash")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(8)
+            }
+            .disabled(isDeletingOrphans)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .glassEffect(.regular.interactive().tint(Color.red.opacity(0.6)), in: .rect(cornerRadius: 16))
+        .shadow(color: .black.opacity(0.12), radius: 4, y: 2)
+        .padding(.horizontal)
     }
 
     private func analyze() async {
@@ -212,6 +265,45 @@ struct EventsOverviewView: View {
         } catch {
             // Error is logged by CalDAVClient
         }
+    }
+
+    private func deleteAllOrphans() async {
+        guard let plan = syncPlan else { return }
+        let orphanUIDs = plan.entries
+            .filter { $0.status == .orphaned }
+            .compactMap { $0.remoteUID }
+        guard !orphanUIDs.isEmpty else { return }
+
+        isDeletingOrphans = true
+        deleteOrphansProgress = (current: 0, total: orphanUIDs.count)
+
+        do {
+            let descriptor = FetchDescriptor<ServerConfiguration>(
+                predicate: #Predicate { $0.isActive }
+            )
+            guard let serverConfig = try? modelContext.fetch(descriptor).first,
+                  let password = KeychainHelper.load(service: serverConfig.keychainServiceID, account: serverConfig.username) else {
+                isDeletingOrphans = false
+                deleteOrphansProgress = nil
+                return
+            }
+            let client = try CalDAVClient(
+                serverURL: serverConfig.serverURL,
+                calendarPath: serverConfig.calendarPath,
+                username: serverConfig.username,
+                password: password
+            )
+            for (index, uid) in orphanUIDs.enumerated() {
+                deleteOrphansProgress = (current: index + 1, total: orphanUIDs.count)
+                try? await client.deleteEvent(uid: uid)
+            }
+        } catch {
+            // Error is logged by CalDAVClient
+        }
+
+        await analyze()
+        isDeletingOrphans = false
+        deleteOrphansProgress = nil
     }
 }
 
