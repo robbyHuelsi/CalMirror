@@ -25,11 +25,15 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            List {
-                statusSection
-                if showDeveloperTools {
-                    settingsSection
+            ScrollView {
+                VStack(spacing: 24) {
+                    tileGrid
+                    if showDeveloperTools {
+                        settingsSection
+                    }
                 }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
             }
             .refreshable {
                 await autoSync()
@@ -96,98 +100,118 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Status Section
+    // MARK: - Tile Grid
 
-    private var statusSection: some View {
-        Section {
+    private var tileGrid: some View {
+        VStack(spacing: 12) {
             NavigationLink {
                 EventsOverviewView()
             } label: {
-                HStack {
-                    Label("Synced Events", systemImage: "calendar")
-                    Spacer()
-                    Text("\(cachedEvents.count)")
-                        .foregroundStyle(.secondary)
-                }
+                GlassTileView(
+                    systemImage: "calendar",
+                    title: "Synced Events",
+                    subtitleText: "\(cachedEvents.count) events",
+                    tintColor: .blue
+                )
             }
 
             NavigationLink {
                 CalendarSelectionView(eventStore: eventStore)
             } label: {
-                HStack {
-                    Label("Active Calendars", systemImage: "checklist")
-                    Spacer()
-                    Text("\(enabledCalendars.count)")
-                        .foregroundStyle(.secondary)
-                }
+                GlassTileView(
+                    systemImage: "checklist",
+                    title: "Active Calendars",
+                    subtitleText: "\(enabledCalendars.count) calendars",
+                    tintColor: .green
+                )
             }
 
             NavigationLink {
                 ServerSettingsView()
             } label: {
-                HStack {
-                    Label("Server", systemImage: "server.rack")
-                    Spacer()
-                    if let server = serverConfigs.first {
-                        Text(server.serverURL)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text("Not configured")
-                            .foregroundStyle(.red)
-                    }
-                }
+                GlassTileView(
+                    systemImage: "server.rack",
+                    title: "Server",
+                    subtitleText: serverConfigs.first?.serverURL ?? "Not configured",
+                    tintColor: .orange
+                )
             }
 
             NavigationLink {
                 SyncDetailView(syncHistory: $syncHistory, isSyncing: $isSyncing)
             } label: {
-                HStack {
-                    Label("Synchronization", systemImage: "arrow.triangle.2.circlepath")
-                    Spacer()
+                GlassTileView(systemImage: "arrow.triangle.2.circlepath", title: "Synchronization", tintColor: .purple) {
                     if let lastSync = syncScheduler.lastSyncDate {
                         TimelineView(.periodic(from: .now, by: 15)) { context in
                             Text(coarseRelativeTime(from: lastSync, now: context.date))
-                                .foregroundStyle(.secondary)
                         }
                     } else {
                         Text("Never")
-                            .foregroundStyle(.secondary)
                     }
                 }
             }
         }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Settings Section
 
     private var settingsSection: some View {
-        Section("Developer Tools") {
-            NavigationLink {
-                SyncLogView(syncResults: syncHistory)
-            } label: {
-                Label("Sync Log", systemImage: "list.bullet.clipboard")
-            }
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Developer Tools")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+                .padding(.leading, 4)
 
-            Button {
-                exportSettings()
-            } label: {
-                Label("Export Settings", systemImage: "square.and.arrow.up")
-            }
+            VStack(spacing: 0) {
+                NavigationLink {
+                    SyncLogView(syncResults: syncHistory)
+                } label: {
+                    Label("Sync Log", systemImage: "list.bullet.clipboard")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 16)
+                }
 
-            Button {
-                showImporter = true
-            } label: {
-                Label("Import Settings", systemImage: "square.and.arrow.down")
-            }
+                Divider().padding(.leading, 16)
 
-            Button(role: .destructive) {
-                UserDefaults.standard.set(false, forKey: "hasCompletedOnboarding")
-                UserDefaults.standard.set(false, forKey: "navigateToEventsOverview")
-                UserDefaults.standard.set(false, forKey: "navigateToEventsOverviewOrphaned")
-                exit(0)
-            } label: {
-                Label("Restart App into Welcome Wizard", systemImage: "wand.and.stars")
+                Button {
+                    exportSettings()
+                } label: {
+                    Label("Export Settings", systemImage: "square.and.arrow.up")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 16)
+                }
+
+                Divider().padding(.leading, 16)
+
+                Button {
+                    showImporter = true
+                } label: {
+                    Label("Import Settings", systemImage: "square.and.arrow.down")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 16)
+                }
+
+                Divider().padding(.leading, 16)
+
+                Button(role: .destructive) {
+                    UserDefaults.standard.set(false, forKey: "hasCompletedOnboarding")
+                    UserDefaults.standard.set(false, forKey: "navigateToEventsOverview")
+                    UserDefaults.standard.set(false, forKey: "navigateToEventsOverviewOrphaned")
+                    exit(0)
+                } label: {
+                    Label("Restart App into Welcome Wizard", systemImage: "wand.and.stars")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 16)
+                }
             }
+            .buttonStyle(.plain)
+            .glassEffect(in: .rect(cornerRadius: 16))
         }
     }
 
